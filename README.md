@@ -142,7 +142,7 @@ git log --oneline -5
 
 ```bash
 git remote add origin git@github.com:<owner>/<private-memory-repo>.git
-git push -u origin rc/develop
+git push -u origin master
 ```
 
 之后更新本地知识库数据：

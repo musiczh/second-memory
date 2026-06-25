@@ -22,7 +22,7 @@ class GitStorage:
 
     def ensure_initialized(self) -> None:
         if not (self.repo / ".git").exists():
-            self._git("init", "-b", "rc/develop")
+            self._git("init", "-b", "master")
         self._ensure_identity()
 
     def _ensure_identity(self) -> None:
