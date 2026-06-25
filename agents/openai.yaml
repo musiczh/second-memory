@@ -1,0 +1,6 @@
+interface:
+  display_name: "Second Memory"
+  short_description: "Save and search personal Markdown memory"
+  default_prompt: "Use $second-memory to save this reflection into my personal second-memory knowledge base."
+policy:
+  allow_implicit_invocation: true

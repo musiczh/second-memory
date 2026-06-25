@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "second-memory"
+version = "0.1.0"
+description = "Local Markdown second-memory knowledge base CLI and Codex skill"
+requires-python = ">=3.11"
+dependencies = [
+  "typer>=0.12.0",
+]
+
+[project.scripts]
+second-memory = "second_memory.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
