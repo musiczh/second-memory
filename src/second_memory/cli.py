@@ -19,6 +19,7 @@ from .compiler import (
 )
 from .config import resolve_repo
 from .errors import SecondMemoryError
+from .recap import build_recap_request
 from .retriever import search_level1, search_level2_request
 from .reviewer import review_request
 from .store.git_store import GitStorage
@@ -163,6 +164,26 @@ def review(
         if not emit_request:
             raise typer.BadParameter("review currently emits an LLM request; pass --emit-request")
         emit(command, {"llm_request": review_request(resolve_repo(repo), range_name=range_name, on_this_day=on_this_day, start_date=start_date, end_date=end_date)}, json_output=True)
+    except Exception as exc:
+        fail(command, exc, json_output=True)
+
+
+@app.command()
+def recap(
+    raw_id: list[str] = typer.Option([], "--raw-id", help="Focus raw ids; defaults to the most recent raw entry."),
+    repo: Optional[str] = typer.Option(None, "--repo"),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    command = "recap"
+    try:
+        target = resolve_repo(repo)
+        focus = list(raw_id)
+        if not focus:
+            entries = all_raw_entries(target)
+            if entries:
+                focus = [sorted(entries, key=lambda e: (e.created, e.id))[-1].id]
+        request = build_recap_request(target, focus, []) if focus else None
+        emit(command, {"focus_raw_ids": focus, "llm_request": request}, json_output=True)
     except Exception as exc:
         fail(command, exc, json_output=True)
 

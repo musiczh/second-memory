@@ -67,8 +67,9 @@ Agent 应先读取仓库根目录的 `SKILL.md`，再按其中工作流执行。
 
 - 用户明确说“记一下 / 存入知识库”时，直接入库。
 - 日常聊天中发现值得沉淀的内容时，先询问用户确认，再入库。
+- 每次入库成功后不要只回“已入库”：基于用户历史内容做一次回顾与关联总结。`compile`/`update` 的 apply 结果会返回 `recap_request`，Agent 自己推理后把回顾呈现给用户。
 - 回答可能依赖个人上下文的问题前，先执行 `search --level 1`。
-- CLI 不直接调用 LLM；`compile`、`rebuild`、`review`、`update`、`search --level 2` 都使用 `--emit-request` / `--apply-response --stdin` 两段式。
+- CLI 不直接调用 LLM；`compile`、`rebuild`、`review`、`recap`、`update`、`search --level 2` 都使用 `--emit-request` / `--apply-response --stdin` 两段式。
 
 主动入库示例：
 
@@ -86,6 +87,13 @@ Agent 读取 `data.llm_request`，自己生成符合 `response_schema` 的 JSON 
 
 ```bash
 printf '%s' "$LLM_RESPONSE_JSON" | second-memory compile --apply-response --stdin --json
+```
+
+入库回灌成功后，apply 结果里的 `data.recap_request` 携带本次记录 + 相关历史页面 + 那年今日时间线。Agent 据此生成回顾，给用户串联历史而不仅是确认入库。也可单独触发：
+
+```bash
+second-memory recap --json                  # 默认对最近一条 raw 做回顾
+second-memory recap --raw-id "$RAW_ID" --json
 ```
 
 回答前检索：
@@ -173,7 +181,7 @@ knowledge-base/
     └── manifest.json
 ```
 
-`timeline` 是一天一个页面，但不会进入 `index.md`；这样一级检索保持轻量，回顾流程仍可直接读取时间线。
+`timeline` 是一天一个页面，但不会进入 `index.md`；这样一级检索保持轻量，回顾流程（`review`）与入库后回顾（`recap` 的那年今日关联）仍可直接读取时间线。
 
 ## 验证命令
 

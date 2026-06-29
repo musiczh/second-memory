@@ -11,6 +11,7 @@ This skill connects Codex to a local Markdown knowledge base through the `second
 
 - Answer in the current conversation first. Use the knowledge base as personal context, not as the only source.
 - Before saving content that was not explicitly requested with phrases like "记一下" or "存入知识库", ask the user for confirmation.
+- After every successful save, do not stop at "已入库". Give the user a short recap that connects the new entry to their accumulated history (recurring themes, related people/projects, on-this-day echoes, actionable follow-ups). The `compile`/`update` apply step returns a `recap_request`; reason over it and present the recap.
 - Never send the whole raw archive to the model. Use `search --level 1` first, then only request deeper context when needed.
 - `index.md` is the compact semantic entry point for entities and topics. Daily timeline pages are used by `review`, not by the level-1 index.
 - The CLI never calls an LLM. For compile, rebuild, review, update, and level-2 search, run `--emit-request`, perform the requested reasoning yourself, then pass the structured JSON back with `--apply-response --stdin` when the command supports it.
@@ -48,7 +49,27 @@ Read `data.llm_request`, produce JSON matching `response_schema`, then:
 printf '%s' "$LLM_JSON" | second-memory compile --apply-response --stdin --json
 ```
 
-Report the saved `raw_id`, updated pages, and commit.
+Report the saved `raw_id`, updated pages, and commit. Then run the post-save recap below.
+
+### Post-Save Recap
+
+Every save must end with a recap that reviews the new content against the user's history, not just a "已入库" confirmation.
+
+The `compile --apply-response` (and `update --apply-response`) result contains a `recap_request` whenever raw entries were consumed. Read `data.recap_request`, produce JSON matching its `response_schema`, and present the recap to the user. The request bundles:
+
+- `focus`: the entries just saved.
+- `related_history`: related entity/topic pages that already carried earlier sources.
+- `on_this_day`: prior timeline pages sharing the same month-day.
+- `history_available`: false when this is the first record on the topic — in that case give a light recap and a direction to watch.
+
+If you need to (re)generate a recap outside the apply step, or for the most recent entry:
+
+```bash
+second-memory recap --json                 # most recent raw entry
+second-memory recap --raw-id "$RAW_ID" --json
+```
+
+Reason over `data.llm_request` the same way, then present the recap. When `llm_request` is null there is nothing to recap.
 
 ### Opportunistic Save
 
@@ -56,7 +77,7 @@ When the user says something durable but did not explicitly ask to save it, ask 
 
 > 这段内容看起来适合沉淀到你的第二记忆库。要我帮你存入吗？
 
-Only after confirmation run the explicit save workflow.
+Only after confirmation run the explicit save workflow, including the post-save recap.
 
 ### Answer With Personal Context
 

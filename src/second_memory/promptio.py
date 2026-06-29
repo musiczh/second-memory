@@ -59,6 +59,17 @@ def review_response_schema() -> dict[str, Any]:
     }
 
 
+def recap_response_schema() -> dict[str, Any]:
+    return {
+        "title": "回顾标题",
+        "recap_markdown": "面向用户的回顾与关联总结，串联本次记录与历史内容",
+        "connections": ["与历史记录的具体关联点"],
+        "patterns": ["反复出现的主题、情绪或项目"],
+        "related_pages": ["entity-...|topic-...|timeline-YYYY-MM-DD"],
+        "suggestions": ["可行动建议或值得追问的问题"],
+    }
+
+
 def llm_request(task: str, agents_rules: str, context: dict[str, Any], instructions: str, response_schema: dict[str, Any]) -> dict[str, Any]:
     return {
         "task": task,

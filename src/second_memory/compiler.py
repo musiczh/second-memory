@@ -209,7 +209,13 @@ def apply_response(repo: Path, response: dict[str, Any], *, command: str, replac
             write_pending(repo, [])
         message = commit_message(command, consumed, sorted(set(updated_pages)))
         commit = store.commit_all(message)
-        return {"raw_ids": consumed, "updated_pages": sorted(set(updated_pages)), "commit": commit, "pending": len(read_pending(repo))}
+        result = {"raw_ids": consumed, "updated_pages": sorted(set(updated_pages)), "commit": commit, "pending": len(read_pending(repo))}
+        if consumed:
+            # Imported lazily to avoid a circular import (recap depends on compiler helpers).
+            from .recap import build_recap_request
+
+            result["recap_request"] = build_recap_request(repo, consumed, sorted(set(updated_pages)))
+        return result
 
 
 def unwrap_response(response: dict[str, Any]) -> dict[str, Any]:
