@@ -115,11 +115,38 @@ second-memory review --range last-week --emit-request --json
 second-memory review --on-this-day 2026-06-25 --emit-request --json
 ```
 
-系统更新：
+系统更新（接入该能力的 Agent 调用）：
 
 ```bash
 second-memory update --emit-request --json
 ```
+
+`update` 是接入方日常调用的统一入口。`--emit-request` 会先对 **代码仓库** 执行
+`git pull --ff-only` 拉取最新 Skill / CLI 代码；如果 HEAD 因此前进，会自动 re-exec
+一次，让本次判断使用刚拉下来的新代码，再根据结果决定如何重编译：
+
+- `rebuild`：知识库版本号变化（`version_changed`）或编译页发生漂移（`drift`），
+  基于原料层用最新规则重建整个 wiki 层。版本/页面漂移优先于 pending，规则变更不会被
+  悄悄降级成增量编译。
+- `incremental`：没有漂移，但有待编译的 raw（pending），增量编译。
+- `noop`：版本号一致且没有 pending / drift，无需处理。
+
+知识库版本号 `KB_VERSION`（默认 `1.0.0`）只在 wiki 组织方式或编译规则变化时，由代码
+作者手动 bump。纯代码更新（改文档、修 bug）不 bump 版本号，`update` 会拉取代码但保持
+`noop`，**不会**触发无谓的重编译。
+
+返回里的 `code_update` 字段是 git pull 的执行结果（是否更新、前后 commit、提示信息）。
+当结果包含 `llm_request` 时，生成响应 JSON 后回灌：
+
+```bash
+printf '%s' "$LLM_RESPONSE_JSON" | second-memory update --apply-response --stdin --json
+```
+
+回灌时会记录本次编译所基于的知识库版本号，因此只有版本号真正变化时才会再次触发重建。
+`second-memory status --json` 的 `kb_version` / `compiled_kb_version` / `version_drift`
+可用于核对当前状态。
+
+> 说明：`update` 拉取的是 CLI/Skill **代码仓库**，与下文“同步本地知识库数据”是两件事。
 
 ## 更新 Skill / CLI 代码
 

@@ -1,11 +1,11 @@
 ---
 name: second-memory
-description: Use when the user wants to save personal notes, diary entries, reflections, work reviews, or reusable thoughts into a local second-memory knowledge base; when a conversation may contain durable personal context worth asking to save; when answering questions that may benefit from the user's accumulated local knowledge; or when the user asks for weekly review, on-this-day recall, knowledge-base search, rebuild, or maintenance.
+description: Use when the user wants to save personal notes, diary entries, reflections, work reviews, or long-term preferences into a local second-memory knowledge base (e.g. "记一下" / "存入知识库"); when a conversation contains durable personal context worth offering to save; when answering questions that may benefit from the user's accumulated local knowledge; when the user wants a recap that connects newly saved content to their history; or when the user asks for weekly review, on-this-day recall, knowledge-base search, rebuild, or maintenance.
 ---
 
 # Second Memory Skill
 
-This skill connects Codex to a local Markdown knowledge base through the `second-memory` CLI. The knowledge base is a personal memory aid: it records what the user wrote and helps with recall and association. It is not an authoritative source of external truth.
+This skill connects the host agent to a local Markdown knowledge base through the `second-memory` CLI. The knowledge base is a personal memory aid: it records what the user wrote and helps with recall and association. It is not an authoritative source of external truth.
 
 ## Core Rules
 
@@ -113,16 +113,34 @@ Generate the review from `data.llm_request.context.timeline_pages`.
 
 ### Maintenance
 
-Daily or manual update:
+Daily or manual update. This is the entry point an integrating agent calls to stay
+current: `update --emit-request` first fast-forwards the Skill/CLI **code** repo
+(`git pull --ff-only`); if that advances HEAD it re-execs once so the run uses the
+freshly pulled code, then decides what to recompile.
 
 ```bash
 second-memory update --emit-request --json
 ```
 
-If the result contains `llm_request`, produce the response JSON and apply it:
+The result reports `code_update` (the git pull outcome) and a `mode`:
+
+- `rebuild` — the knowledge-base version changed (`version_changed`) or compiled
+  pages drifted (`drift`); the wiki layer is rebuilt from the raw archive with the
+  latest rules. Version/page drift takes priority over pending entries, so a rule
+  change is never silently downgraded to an incremental pass.
+- `incremental` — no drift, but pending raw entries are waiting; compile them.
+- `noop` — nothing to do: version current and no pending/drift.
+
+The knowledge-base version (`KB_VERSION`, default `1.0.0`) is bumped in code only
+when the wiki organization or compile rules change. A plain code update that does
+not bump it will pull but stay `noop`, so no needless recompile happens.
+
+When the result contains `llm_request`, produce the response JSON and apply it:
 
 ```bash
 printf '%s' "$LLM_JSON" | second-memory update --apply-response --stdin --json
 ```
 
-Use `second-memory status --json` after maintenance.
+Applying records the knowledge-base version the wiki was built against, so the next
+`update` only rebuilds when the version actually changes. Use `second-memory status
+--json` (`kb_version` / `compiled_kb_version` / `version_drift`) after maintenance.

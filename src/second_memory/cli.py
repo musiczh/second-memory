@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Optional
@@ -14,10 +15,14 @@ from .compiler import (
     build_compile_request,
     initialize,
     list_compiled_pages,
+    load_manifest,
     manifest_drift,
+    pull_skill_code,
     read_pending,
+    skill_code_commit,
+    version_drift,
 )
-from .config import resolve_repo
+from .config import KB_VERSION, resolve_repo
 from .errors import SecondMemoryError
 from .recap import build_recap_request
 from .retriever import search_level1, search_level2_request
@@ -42,6 +47,32 @@ def fail(command: str, exc: Exception, json_output: bool = True) -> None:
 
 def read_stdin_text() -> str:
     return sys.stdin.read()
+
+
+# When the code repo is fast-forwarded mid-run we re-exec the CLI so the new code
+# loads; this env var carries the original pull result forward and guards the
+# re-exec so it can happen at most once.
+_REEXEC_PULL_ENV = "SECOND_MEMORY_UPDATE_PULL"
+
+
+def sync_skill_code() -> dict:
+    """Pull the Skill/CLI code repo, then re-exec this command if it advanced.
+
+    A plain in-process pull is not enough: ``KB_VERSION`` and the compile helpers
+    are bound at import time, so judging drift right after a fast-forward would
+    still use the old code. When the pull moves HEAD we re-exec with the freshly
+    pulled code; the original pull result is carried through ``_REEXEC_PULL_ENV``
+    so the post-exec run reports it and never pulls (or re-execs) twice.
+    """
+    carried = os.environ.get(_REEXEC_PULL_ENV)
+    if carried is not None:
+        return json.loads(carried)
+    pull = pull_skill_code()
+    if pull.get("updated"):
+        env = dict(os.environ)
+        env[_REEXEC_PULL_ENV] = json_dumps(pull)
+        os.execve(sys.executable, [sys.executable, "-m", "second_memory.cli", *sys.argv[1:]], env)
+    return pull
 
 
 @app.command()
@@ -200,21 +231,27 @@ def update(
     try:
         target = resolve_repo(repo)
         if emit_request:
+            pull = sync_skill_code()
             pending = read_pending(target)
             drift = manifest_drift(target)
+            version_changed = version_drift(target)
+            # Version drift means the compiled layer was built by older rules, so a
+            # full rebuild from the raw archive takes priority over consuming pending.
+            if version_changed or drift:
+                request = build_compile_request(target, task="update", raw_entries=all_raw_entries(target), mode="rebuild")
+                emit(command, {"mode": "rebuild", "pending": len(pending), "drift": drift, "code_update": pull, "version_changed": version_changed, "llm_request": request}, json_output=True)
+                return
             if pending:
                 request = build_compile_request(target, task="update", mode="incremental")
-                emit(command, {"mode": "incremental", "pending": len(pending), "drift": drift, "llm_request": request}, json_output=True)
+                emit(command, {"mode": "incremental", "pending": len(pending), "drift": drift, "code_update": pull, "version_changed": False, "llm_request": request}, json_output=True)
                 return
-            if drift:
-                request = build_compile_request(target, task="update", raw_entries=all_raw_entries(target), mode="rebuild")
-                emit(command, {"mode": "rebuild", "pending": 0, "drift": drift, "llm_request": request}, json_output=True)
-                return
-            emit(command, {"mode": "noop", "pending": 0, "drift": []}, json_output=True)
+            emit(command, {"mode": "noop", "pending": 0, "drift": [], "code_update": pull, "version_changed": False}, json_output=True)
             return
         if apply_response_flag:
             response = json.loads(read_stdin_text() if stdin else sys.stdin.read())
-            replace = not read_pending(target)
+            # Rebuild (replace) when the version drifted or pages drifted; only an
+            # incremental compile of fresh pending entries keeps the existing wiki.
+            replace = version_drift(target) or bool(manifest_drift(target)) or not read_pending(target)
             emit(command, apply_response(target, response, command="update", replace_compiled=replace), json_output=True)
             return
         raise typer.BadParameter("use --emit-request or --apply-response --stdin")
@@ -240,6 +277,10 @@ def status(
             "raw": len(all_raw_entries(target)),
             "recent_commit": store.current_commit() if store else None,
             "manifest_drift": manifest_drift(target),
+            "code_commit": skill_code_commit(),
+            "kb_version": KB_VERSION,
+            "compiled_kb_version": load_manifest(target).get("kb_version"),
+            "version_drift": version_drift(target),
         }
         emit(command, data, json_output=True)
     except Exception as exc:

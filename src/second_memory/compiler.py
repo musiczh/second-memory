@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from . import frontmatter
-from .config import default_config, load_config, write_config
+from .config import KB_VERSION, default_config, load_config, skill_repo_root, write_config
 from .errors import ValidationError
 from .lock import RepoLock
 from .models import Page, RawEntry
@@ -38,7 +38,7 @@ def initialize(repo: Path, scope: str, agent: str | None, backend: str = "git") 
         (repo / "AGENTS.md").write_text(default_agents_rules(), encoding="utf-8")
     manifest = repo / ".kb" / "manifest.json"
     if not manifest.exists():
-        manifest.write_text(json_dumps({"schema": 1, "compiled_raw": [], "pages": {}, "last_compile_commit": None}) + "\n", encoding="utf-8")
+        manifest.write_text(json_dumps({"schema": 1, "compiled_raw": [], "pages": {}, "kb_version": KB_VERSION}) + "\n", encoding="utf-8")
     pending = repo / ".kb" / "pending.jsonl"
     pending.touch(exist_ok=True)
     write_config(repo, default_config(repo, scope, agent, backend))
@@ -403,7 +403,7 @@ def first_body_line(body: str) -> str:
 def load_manifest(repo: Path) -> dict[str, Any]:
     path = repo / ".kb" / "manifest.json"
     if not path.exists():
-        return {"schema": 1, "compiled_raw": [], "pages": {}, "last_compile_commit": None}
+        return {"schema": 1, "compiled_raw": [], "pages": {}, "kb_version": None}
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -414,8 +414,42 @@ def update_manifest(repo: Path, compiled_raw: list[str]) -> None:
         if meta.get("id"):
             content = path.read_text(encoding="utf-8")
             pages[str(meta["id"])] = {"path": relpath(path, repo), "content_hash": sha256_text(content)}
-    manifest = {"schema": 1, "compiled_raw": compiled_raw, "pages": pages, "last_compile_commit": None}
+    manifest = {"schema": 1, "compiled_raw": compiled_raw, "pages": pages, "kb_version": KB_VERSION}
     (repo / ".kb" / "manifest.json").write_text(json_dumps(manifest) + "\n", encoding="utf-8")
+
+
+def skill_code_commit() -> str | None:
+    """Commit of the installed Skill/CLI code repo, or None when it is not a git checkout.
+
+    Used only for informational display (e.g. ``status``); it does not drive rebuilds.
+    """
+    root = skill_repo_root()
+    if not (root / ".git").exists():
+        return None
+    return GitStorage(root).full_commit()
+
+
+def pull_skill_code() -> dict[str, Any]:
+    """Fast-forward the Skill/CLI code repo so the next compile uses the latest logic.
+
+    Returns a structured report; never raises so ``update`` degrades to a local-only
+    pass when the code repo has no remote, no network, or a divergent history.
+    """
+    root = skill_repo_root()
+    if not (root / ".git").exists():
+        return {"attempted": False, "ok": False, "updated": False, "before": None, "after": None, "message": "skill code repo is not a git checkout"}
+    return GitStorage(root).pull_ff()
+
+
+def version_drift(repo: Path) -> bool:
+    """True when the compiled layer was built against a different knowledge-base version.
+
+    The trigger is the code-declared ``KB_VERSION`` versus the version recorded in the
+    manifest. A missing recorded version (older repos predating versioning) is treated
+    as drift, since the wiki organization may have evolved since it was compiled.
+    """
+    recorded = load_manifest(repo).get("kb_version")
+    return recorded != KB_VERSION
 
 
 def manifest_drift(repo: Path) -> list[str]:
@@ -447,7 +481,7 @@ def commit_message(command: str, raw_ids: list[str], pages: list[str]) -> str:
         f"{subject} {len(raw_ids)} raw -> {len(pages)} pages\n\n"
         f"raw-ids: {', '.join(raw_ids) if raw_ids else 'none'}\n"
         f"pages: {', '.join(pages) if pages else 'none'}\n"
-        "compile-version: 1\n"
+        f"kb-version: {KB_VERSION}\n"
         "summary: 更新第二记忆库编译层\n"
     )
 

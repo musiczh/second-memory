@@ -10,6 +10,13 @@ from .errors import NotInitializedError, ValidationError
 DEFAULT_HOME = Path("~/.second-memory").expanduser()
 VALID_SCOPES = {"shared", "agent"}
 
+# Knowledge-base compile-rule version. Bump this (semver) whenever the wiki
+# organization or compile rules change in a way that requires rebuilding the
+# compiled layer from the raw archive. It is intentionally separate from the
+# package version (__init__.__version__): plain code updates that do not change
+# compile rules must NOT bump this, so `update` will not force a rebuild.
+KB_VERSION = "1.0.0"
+
 
 def default_repo_for_scope(scope: str = "shared", agent: str | None = None) -> Path:
     home = Path(os.environ.get("SECOND_MEMORY_HOME", str(DEFAULT_HOME))).expanduser()
@@ -40,6 +47,19 @@ def config_path(repo: Path) -> Path:
     return repo / ".kb" / "config.yaml"
 
 
+def skill_repo_root() -> Path:
+    """Filesystem root of the installed Skill/CLI code repo.
+
+    The package lives at ``<root>/src/second_memory/config.py``; allow an env
+    override for non-standard installs. This is the *code* repo (Skill source),
+    distinct from the runtime knowledge-base repo resolved by ``resolve_repo``.
+    """
+    override = os.environ.get("SECOND_MEMORY_SKILL_REPO")
+    if override:
+        return Path(override).expanduser().resolve()
+    return Path(__file__).resolve().parents[2]
+
+
 def load_config(repo: Path) -> dict[str, Any]:
     path = config_path(repo)
     if not path.exists():
@@ -64,5 +84,5 @@ def default_config(repo: Path, scope: str, agent: str | None, backend: str) -> d
         "language": "zh-CN",
         "review_max_days": 7,
         "backend": backend,
-        "compile_version": 1,
+        "kb_version": KB_VERSION,
     }

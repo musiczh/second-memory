@@ -66,3 +66,27 @@ class GitStorage:
         if result.returncode != 0:
             return None
         return result.stdout.strip() or None
+
+    def full_commit(self) -> str | None:
+        result = self._git("rev-parse", "HEAD", check=False)
+        if result.returncode != 0:
+            return None
+        return result.stdout.strip() or None
+
+    def pull_ff(self) -> dict[str, object]:
+        """Fast-forward the repo to its upstream. Network/auth/divergence failures
+        are reported, never raised, so callers can keep working against local HEAD."""
+        before = self.full_commit()
+        upstream = self._git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}", check=False)
+        if upstream.returncode != 0:
+            return {"attempted": False, "ok": False, "updated": False, "before": before, "after": before, "message": "no upstream branch configured"}
+        result = self._git("pull", "--ff-only", check=False)
+        after = self.full_commit()
+        return {
+            "attempted": True,
+            "ok": result.returncode == 0,
+            "updated": bool(before and after and before != after),
+            "before": before,
+            "after": after,
+            "message": (result.stdout + result.stderr).strip(),
+        }
