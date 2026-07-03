@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import webbrowser
 from pathlib import Path
 from typing import Optional
 
@@ -29,6 +30,7 @@ from .retriever import search_level1, search_level2_request
 from .reviewer import review_request
 from .store.git_store import GitStorage
 from .utils import json_dumps
+from .wiki import build_wiki_html
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 
@@ -283,6 +285,26 @@ def status(
             "version_drift": version_drift(target),
         }
         emit(command, data, json_output=True)
+    except Exception as exc:
+        fail(command, exc, json_output=True)
+
+
+@app.command()
+def wiki(
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="输出 HTML 路径，默认 <repo>/../wiki.html"),
+    open_browser: bool = typer.Option(False, "--open", help="生成后用浏览器打开。"),
+    repo: Optional[str] = typer.Option(None, "--repo"),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    command = "wiki"
+    try:
+        target = resolve_repo(repo)
+        default_out = target.parent / "wiki.html"
+        out_path = Path(output).expanduser().resolve() if output else default_out
+        result = build_wiki_html(target, out_path)
+        if open_browser:
+            webbrowser.open(out_path.as_uri())
+        emit(command, result, json_output=True)
     except Exception as exc:
         fail(command, exc, json_output=True)
 

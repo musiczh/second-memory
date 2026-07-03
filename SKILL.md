@@ -111,6 +111,30 @@ second-memory review --on-this-day YYYY-MM-DD --emit-request --json
 
 Generate the review from `data.llm_request.context.timeline_pages`.
 
+### Wiki 浏览
+
+When the user wants to browse the whole knowledge base "像看书一样" (as a readable,
+clickable page), render the compiled `wiki/` layer and `raw/` archive into a single
+self-contained HTML file:
+
+```bash
+second-memory wiki --json            # writes <repo>/../wiki.html by default
+second-memory wiki --open --json     # also open it in the default browser
+second-memory wiki --output /path/to/memory.html --json
+```
+
+Unlike `compile`/`review`/`update`, this is a **single deterministic command** — no LLM
+reasoning and no `--emit-request` / `--apply-response` round trip. Report the returned
+`data.output` path and `data.counts` (entities / topics / timeline / raw). The HTML embeds
+its data and needs no server: it opens on double-click and offers three views — timeline,
+entities (grouped by kind), and topics — each entity/topic detail page linking its summary,
+related entities/topics, timeline appearances, and source raw entries.
+
+The output defaults to **outside the knowledge-base git repo** (`<repo>/../wiki.html`), so
+it never trips the `compile`/`update` worktree guard. It is a pure build artifact: re-run
+`second-memory wiki` after new entries are saved to refresh it; nothing regenerates it
+automatically.
+
 ### Maintenance
 
 Daily or manual update. This is the entry point an integrating agent calls to stay
