@@ -115,6 +115,19 @@ second-memory review --range last-week --emit-request --json
 second-memory review --on-this-day 2026-06-25 --emit-request --json
 ```
 
+浏览知识库 Wiki（把编译层和原料层渲染成一个可浏览的 HTML 文件）：
+
+```bash
+second-memory wiki --json                       # 默认输出到 <repo>/../wiki.html
+second-memory wiki --open --json                # 生成后用浏览器打开
+second-memory wiki --output ~/memory.html --json
+```
+
+与 `compile`/`review`/`update` 不同，`wiki` 是**确定性命令**，不调用 LLM、也没有两段式
+`--emit-request` / `--apply-response`。生成的 HTML 内嵌数据、双击即开，提供时间线、实体
+（按类型分组）、主题三个视图，实体/主题详情页可点开摘要、关联实体/主题、出现的时间线和
+关联原料。返回里的 `data.output` 是文件绝对路径，`data.counts` 是各类页面数量。
+
 系统更新（接入该能力的 Agent 调用）：
 
 ```bash
@@ -209,6 +222,8 @@ knowledge-base/
 ```
 
 `timeline` 是一天一个页面，但不会进入 `index.md`；这样一级检索保持轻量，回顾流程（`review`）与入库后回顾（`recap` 的那年今日关联）仍可直接读取时间线。
+
+`second-memory wiki` 生成的 `wiki.html` 默认写在知识库仓库**之外**（`<repo>/../wiki.html`，即默认路径下的 `~/.second-memory/wiki.html`）。它是可再生的构建产物，不纳入知识库 git 管理，也因此不会触发 `compile`/`update` 的工作区校验。
 
 ## 验证命令
 

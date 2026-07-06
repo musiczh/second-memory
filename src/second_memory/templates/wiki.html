@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第二记忆 · Wiki</title>
+<style>
+  /* ---- ink & dusk : a quiet reading room, not a dashboard ---------------- */
+  :root {
+    --paper:      #f5f6f7;
+    --paper-sink: #eceef0;
+    --ink:        #23232a;
+    --ink-soft:   #55555f;
+    --ink-faint:  #8a8a95;
+    --line:       #dcdee1;
+    --line-soft:  #e6e8ea;
+    --accent:     #474d73;
+    --accent-2:   #6b7099;
+    --dot-person:  #7d6f9c;
+    --dot-project: #4f7a86;
+    --dot-concept: #6b7099;
+    --dot-emotion: #a8737f;
+    --serif: "Songti SC", "STSong", "SimSun", "Noto Serif CJK SC", "Source Han Serif SC", Georgia, serif;
+    --sans:  -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+    --mono:  "SF Mono", "JetBrains Mono", "Menlo", "Consolas", ui-monospace, monospace;
+    --measure: 42rem;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper:      #16171b;
+      --paper-sink: #1d1e23;
+      --ink:        #e5e5ea;
+      --ink-soft:   #a9a9b4;
+      --ink-faint:  #74747f;
+      --line:       #2c2d33;
+      --line-soft:  #24252a;
+      --accent:     #9aa0cf;
+      --accent-2:   #7f85b3;
+      --dot-person:  #b0a2d0;
+      --dot-project: #7fb0bd;
+      --dot-concept: #9aa0cf;
+      --dot-emotion: #d3a0ab;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 17px;
+    line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  a { color: inherit; text-decoration: none; }
+
+  /* ---- masthead ---------------------------------------------------------- */
+  header.masthead {
+    position: sticky; top: 0; z-index: 20;
+    background: color-mix(in srgb, var(--paper) 88%, transparent);
+    backdrop-filter: saturate(1.1) blur(10px);
+    border-bottom: 1px solid var(--line);
+  }
+  .masthead-inner {
+    max-width: var(--measure);
+    margin: 0 auto;
+    padding: 0 1.4rem;
+    display: flex; align-items: baseline; gap: 1.2rem;
+    min-height: 60px;
+  }
+  .brand {
+    font-family: var(--serif);
+    font-size: 1.15rem;
+    letter-spacing: 0.02em;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .brand small {
+    font-family: var(--mono);
+    font-size: 0.62rem;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin-left: 0.55rem;
+  }
+  nav.tabs { margin-left: auto; display: flex; gap: 0.2rem; }
+  nav.tabs button {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    background: none; border: 0;
+    padding: 0.5rem 0.35rem;
+    cursor: pointer;
+    position: relative;
+    transition: color 0.18s ease;
+  }
+  nav.tabs button:hover { color: var(--ink-soft); }
+  nav.tabs button[aria-current="true"] { color: var(--ink); }
+  nav.tabs button[aria-current="true"]::after {
+    content: ""; position: absolute; left: 0.35rem; right: 0.35rem; bottom: -1px;
+    height: 2px; background: var(--accent);
+  }
+
+  main {
+    max-width: var(--measure);
+    margin: 0 auto;
+    padding: 2.6rem 1.4rem 6rem;
+    min-height: 60vh;
+  }
+  .view { animation: rise 0.34s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+  @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+  /* ---- view headers ------------------------------------------------------ */
+  .view-eyebrow {
+    font-family: var(--mono);
+    font-size: 0.68rem; letter-spacing: 0.24em; text-transform: uppercase;
+    color: var(--ink-faint);
+    margin: 0 0 0.5rem;
+  }
+  .view-title {
+    font-family: var(--serif);
+    font-weight: 600;
+    font-size: 2rem;
+    line-height: 1.2;
+    margin: 0 0 2.2rem;
+    letter-spacing: 0.01em;
+  }
+
+  /* ---- index rows (book-like, hairline dividers not cards) --------------- */
+  .kind-group { margin-bottom: 2.4rem; }
+  .kind-label {
+    display: flex; align-items: center; gap: 0.55rem;
+    font-family: var(--mono);
+    font-size: 0.68rem; letter-spacing: 0.2em; text-transform: uppercase;
+    color: var(--ink-faint);
+    padding-bottom: 0.7rem;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 0.3rem;
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--accent); }
+  .dot.person  { background: var(--dot-person); }
+  .dot.project { background: var(--dot-project); }
+  .dot.concept { background: var(--dot-concept); }
+  .dot.emotion { background: var(--dot-emotion); }
+
+  .row {
+    display: block;
+    padding: 1rem 0.2rem;
+    border-bottom: 1px solid var(--line-soft);
+    cursor: pointer;
+    transition: padding-left 0.2s ease, background 0.2s ease;
+  }
+  .row:hover { padding-left: 0.7rem; background: var(--paper-sink); }
+  .row-title {
+    font-family: var(--serif);
+    font-size: 1.16rem;
+    font-weight: 600;
+    margin-bottom: 0.2rem;
+  }
+  .row-summary { color: var(--ink-soft); font-size: 0.95rem; line-height: 1.6; }
+  .row-meta {
+    font-family: var(--mono);
+    font-size: 0.66rem; letter-spacing: 0.08em;
+    color: var(--ink-faint);
+    margin-top: 0.4rem;
+  }
+
+  /* ---- timeline : the reading spine (signature) -------------------------- */
+  .spine { position: relative; padding-left: 1.7rem; }
+  .spine::before {
+    content: ""; position: absolute; left: 5px; top: 6px; bottom: 6px;
+    width: 1px; background: var(--line);
+  }
+  .day { position: relative; margin-bottom: 2.3rem; }
+  .day-date {
+    font-family: var(--mono);
+    font-size: 0.74rem; letter-spacing: 0.12em;
+    color: var(--ink-soft);
+    margin-bottom: 0.9rem;
+  }
+  .day-date .wk { color: var(--ink-faint); margin-left: 0.5rem; }
+  .day::before {
+    content: ""; position: absolute; left: -1.7rem; top: 5px;
+    width: 11px; height: 11px; border-radius: 50%;
+    background: var(--paper); border: 2px solid var(--accent);
+  }
+  .month-rule {
+    font-family: var(--mono);
+    font-size: 0.66rem; letter-spacing: 0.2em; text-transform: uppercase;
+    color: var(--ink-faint);
+    margin: 0 0 1.4rem -1.7rem;
+    padding-bottom: 0.5rem; border-bottom: 1px solid var(--line);
+  }
+  .entry { margin-bottom: 0.85rem; }
+  .entry-time {
+    font-family: var(--mono); font-size: 0.7rem; color: var(--accent);
+    margin-right: 0.5rem;
+  }
+  .entry-text { font-family: var(--serif); font-size: 1.04rem; line-height: 1.65; }
+  .threads { margin-top: 0.4rem; display: flex; flex-wrap: wrap; gap: 0.35rem; }
+
+  /* ---- chips ------------------------------------------------------------- */
+  .chip {
+    display: inline-flex; align-items: center; gap: 0.4rem;
+    font-family: var(--sans); font-size: 0.8rem;
+    color: var(--ink-soft);
+    background: var(--paper-sink);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 0.18rem 0.7rem;
+    cursor: pointer;
+    transition: border-color 0.16s ease, color 0.16s ease;
+  }
+  .chip:hover { border-color: var(--accent); color: var(--ink); }
+  .chip .dot { width: 6px; height: 6px; }
+  .chip.raw { border-radius: 6px; font-family: var(--mono); font-size: 0.72rem; }
+
+  /* ---- detail ------------------------------------------------------------ */
+  .back {
+    font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.1em;
+    color: var(--ink-faint); cursor: pointer; display: inline-block; margin-bottom: 1.6rem;
+    transition: color 0.16s ease;
+  }
+  .back:hover { color: var(--accent); }
+  .detail-kind {
+    font-family: var(--mono);
+    font-size: 0.68rem; letter-spacing: 0.22em; text-transform: uppercase;
+    color: var(--ink-faint);
+    display: flex; align-items: center; gap: 0.5rem;
+    margin-bottom: 0.7rem;
+  }
+  .detail-title {
+    font-family: var(--serif); font-weight: 600;
+    font-size: 2.1rem; line-height: 1.22; margin: 0 0 0.8rem;
+    letter-spacing: 0.01em;
+  }
+  .detail-aliases { color: var(--ink-faint); font-size: 0.9rem; margin-bottom: 1.4rem; }
+  .lede {
+    font-family: var(--serif);
+    font-size: 1.16rem; line-height: 1.6; color: var(--ink-soft);
+    border-left: 2px solid var(--accent);
+    padding: 0.1rem 0 0.1rem 1.1rem;
+    margin: 0 0 2.2rem;
+  }
+  .prose { font-family: var(--serif); }
+  .prose h2 { font-size: 1.02rem; font-family: var(--sans); font-weight: 700; letter-spacing: 0.01em; color: var(--ink); margin: 2rem 0 0.7rem; }
+  .prose h3 { font-size: 0.96rem; font-family: var(--sans); font-weight: 600; color: var(--ink-soft); margin: 1.5rem 0 0.5rem; }
+  .prose h4 { font-size: 0.9rem; font-family: var(--sans); font-weight: 600; color: var(--ink-soft); margin: 1.2rem 0 0.4rem; }
+  .prose p { margin: 0 0 1rem; }
+  .prose ul, .prose ol { margin: 0 0 1rem; padding-left: 1.3rem; }
+  .prose li { margin-bottom: 0.4rem; }
+  .prose code { font-family: var(--mono); font-size: 0.85em; background: var(--paper-sink); padding: 0.1em 0.4em; border-radius: 4px; }
+  .prose a { color: var(--accent); border-bottom: 1px solid var(--line); }
+  .prose strong { font-weight: 700; }
+
+  .section { margin-top: 2.6rem; }
+  .section-label {
+    font-family: var(--mono);
+    font-size: 0.66rem; letter-spacing: 0.2em; text-transform: uppercase;
+    color: var(--ink-faint);
+    padding-bottom: 0.6rem; border-bottom: 1px solid var(--line);
+    margin-bottom: 1rem;
+  }
+  .chip-wrap { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+
+  .related-item { display: block; padding: 0.7rem 0; border-bottom: 1px solid var(--line-soft); cursor: pointer; transition: padding-left 0.18s ease; }
+  .related-item:hover { padding-left: 0.5rem; }
+  .related-head { display: flex; align-items: center; gap: 0.5rem; font-family: var(--serif); font-size: 1.02rem; font-weight: 600; }
+  .related-summary { color: var(--ink-faint); font-size: 0.86rem; margin-top: 0.15rem; }
+
+  .mini-time { display: flex; gap: 0.7rem; padding: 0.45rem 0; border-bottom: 1px solid var(--line-soft); font-size: 0.92rem; cursor: pointer; }
+  .mini-time:hover { color: var(--accent); }
+  .mini-time .d { font-family: var(--mono); font-size: 0.72rem; color: var(--ink-faint); white-space: nowrap; padding-top: 0.15rem; }
+
+  .raw-body { font-family: var(--serif); font-size: 1.06rem; line-height: 1.8; }
+  .raw-body p { margin: 0 0 1.15rem; }
+
+  .empty { color: var(--ink-faint); font-family: var(--serif); font-size: 1.05rem; padding: 3rem 0; text-align: center; }
+
+  footer {
+    max-width: var(--measure); margin: 0 auto; padding: 2rem 1.4rem 3rem;
+    border-top: 1px solid var(--line);
+    font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.08em;
+    color: var(--ink-faint);
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;
+  }
+
+  @media (max-width: 640px) {
+    body { font-size: 16px; }
+    .view-title { font-size: 1.7rem; }
+    .detail-title { font-size: 1.7rem; }
+    .masthead-inner { gap: 0.6rem; }
+    .brand small { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .view { animation: none; }
+    * { transition: none !important; }
+  }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+</style>
+</head>
+<body>
+<header class="masthead">
+  <div class="masthead-inner">
+    <div class="brand" id="brand" role="link" tabindex="0">第二记忆<small>Second Memory</small></div>
+    <nav class="tabs" id="tabs" aria-label="视图">
+      <button data-route="timeline">时间线</button>
+      <button data-route="entities">实体</button>
+      <button data-route="topics">主题</button>
+    </nav>
+  </div>
+</header>
+
+<main id="app"></main>
+
+<footer>
+  <span id="foot-counts"></span>
+  <span id="foot-gen"></span>
+</footer>
+
+<script type="application/json" id="wiki-data">__WIKI_DATA__</script>
+<script>
+(function () {
+  "use strict";
+  var DATA = JSON.parse(document.getElementById("wiki-data").textContent);
+  var app = document.getElementById("app");
+
+  var KIND_LABEL = { person: "人物", project: "项目", concept: "概念", emotion: "情绪", topic: "主题", unknown: "" };
+  var WEEKDAY = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+
+  var byId = {};
+  DATA.entities.forEach(function (e) { byId[e.id] = e; });
+  DATA.topics.forEach(function (t) { byId[t.id] = t; });
+  var rawById = DATA.raws || {};
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+  function el(html) { var d = document.createElement("div"); d.innerHTML = html.trim(); return d.firstChild; }
+  function weekday(dateStr) {
+    var p = dateStr.split("-");
+    if (p.length < 3) return "";
+    var d = new Date(Date.UTC(+p[0], +p[1] - 1, +p[2]));
+    return WEEKDAY[d.getUTCDay()];
+  }
+  function go(route) { location.hash = "#/" + route; }
+
+  function dotClass(kind) {
+    return ["person", "project", "concept", "emotion"].indexOf(kind) >= 0 ? kind : "";
+  }
+
+  // ---- index views ------------------------------------------------------- //
+  function renderIndex(kind) {
+    var isEntity = kind === "entities";
+    var items = isEntity ? DATA.entities : DATA.topics;
+    var view = el('<div class="view"></div>');
+    view.appendChild(el('<p class="view-eyebrow">' + (isEntity ? "Entities · " + items.length : "Topics · " + items.length) + "</p>"));
+    view.appendChild(el('<h1 class="view-title">' + (isEntity ? "实体" : "主题") + "</h1>"));
+
+    if (!items.length) { view.appendChild(el('<p class="empty">还没有编译出' + (isEntity ? "实体" : "主题") + "页面。</p>")); app.replaceChildren(view); return; }
+
+    if (isEntity) {
+      var order = ["person", "project", "concept", "emotion"];
+      var groups = {};
+      items.forEach(function (e) { var k = e.entity_kind || "concept"; (groups[k] = groups[k] || []).push(e); });
+      var keys = order.filter(function (k) { return groups[k]; }).concat(Object.keys(groups).filter(function (k) { return order.indexOf(k) < 0; }));
+      keys.forEach(function (k) {
+        var g = el('<section class="kind-group"></section>');
+        g.appendChild(el('<div class="kind-label"><span class="dot ' + dotClass(k) + '"></span>' + (KIND_LABEL[k] || esc(k)) + " · " + groups[k].length + "</div>"));
+        groups[k].forEach(function (e) { g.appendChild(indexRow(e)); });
+        view.appendChild(g);
+      });
+    } else {
+      var sec = el('<section class="kind-group"></section>');
+      items.forEach(function (t) { sec.appendChild(indexRow(t)); });
+      view.appendChild(sec);
+    }
+    app.replaceChildren(view);
+  }
+
+  function indexRow(page) {
+    var row = el('<a class="row" role="link" tabindex="0"></a>');
+    row.appendChild(el('<div class="row-title">' + esc(page.title) + "</div>"));
+    if (page.summary) row.appendChild(el('<div class="row-summary">' + esc(page.summary) + "</div>"));
+    var bits = [];
+    if (page.related && page.related.length) bits.push(page.related.length + " 关联");
+    if (page.sources && page.sources.length) bits.push(page.sources.length + " 原料");
+    if (page.updated) bits.push("更新于 " + page.updated.slice(0, 10));
+    if (bits.length) row.appendChild(el('<div class="row-meta">' + bits.join("　·　") + "</div>"));
+    row.addEventListener("click", function () { go((page.type === "entity" ? "entity/" : "topic/") + page.id); });
+    row.addEventListener("keydown", function (ev) { if (ev.key === "Enter") { go((page.type === "entity" ? "entity/" : "topic/") + page.id); } });
+    return row;
+  }
+
+  // ---- timeline ---------------------------------------------------------- //
+  function renderTimeline() {
+    var view = el('<div class="view"></div>');
+    view.appendChild(el('<p class="view-eyebrow">Timeline · ' + DATA.timeline.length + " 天</p>"));
+    view.appendChild(el('<h1 class="view-title">时间线</h1>'));
+
+    if (!DATA.timeline.length) { view.appendChild(el('<p class="empty">还没有时间线记录。</p>')); app.replaceChildren(view); return; }
+
+    var spine = el('<div class="spine"></div>');
+    var lastMonth = null;
+    DATA.timeline.forEach(function (day) {
+      var month = day.date.slice(0, 7);
+      if (month !== lastMonth) { spine.appendChild(el('<div class="month-rule">' + month + "</div>")); lastMonth = month; }
+      var dayEl = el('<div class="day"></div>');
+      dayEl.appendChild(el('<div class="day-date">' + esc(day.date) + '<span class="wk">' + weekday(day.date) + "</span></div>"));
+      day.entries.forEach(function (entry) {
+        var e = el('<div class="entry"></div>');
+        var txt = (entry.time ? '<span class="entry-time">' + esc(entry.time) + "</span>" : "") + '<span class="entry-text">' + esc(entry.text) + "</span>";
+        e.appendChild(el("<div>" + txt + "</div>"));
+        var hasRefs = entry.refs && entry.refs.length;
+        var hasRaws = entry.raws && entry.raws.length;
+        if (hasRefs || hasRaws) {
+          var threads = el('<div class="threads"></div>');
+          if (hasRefs) entry.refs.forEach(function (ref) { threads.appendChild(refChip(ref)); });
+          if (hasRaws) entry.raws.forEach(function (raw) { if (rawById[raw.id]) threads.appendChild(rawChip(raw.id)); });
+          e.appendChild(threads);
+        }
+        dayEl.appendChild(e);
+      });
+      spine.appendChild(dayEl);
+    });
+    view.appendChild(spine);
+    app.replaceChildren(view);
+  }
+
+  function refChip(ref) {
+    if (ref.type === "unknown") {
+      var span = el('<span class="chip" style="cursor:default;opacity:.7"><span class="dot"></span>' + esc(ref.title) + "</span>");
+      return span;
+    }
+    var chip = el('<a class="chip" role="link" tabindex="0"><span class="dot ' + dotClass(byId[ref.id] && byId[ref.id].entity_kind) + '"></span>' + esc(ref.title) + "</a>");
+    var target = (ref.type === "entity" ? "entity/" : "topic/") + ref.id;
+    chip.addEventListener("click", function () { go(target); });
+    chip.addEventListener("keydown", function (ev) { if (ev.key === "Enter") go(target); });
+    return chip;
+  }
+
+  function rawChip(rawId) {
+    var raw = rawById[rawId];
+    var label = raw ? raw.title : rawId;
+    var chip = el('<a class="chip raw" role="link" tabindex="0">📄 ' + esc(label) + "</a>");
+    chip.addEventListener("click", function () { go("raw/" + rawId); });
+    chip.addEventListener("keydown", function (ev) { if (ev.key === "Enter") go("raw/" + rawId); });
+    return chip;
+  }
+
+  // ---- detail ------------------------------------------------------------ //
+  function renderDetail(page) {
+    var view = el('<div class="view"></div>');
+    var back = el('<span class="back" role="link" tabindex="0">← ' + (page.type === "entity" ? "实体" : "主题") + "</span>");
+    back.addEventListener("click", function () { go(page.type === "entity" ? "entities" : "topics"); });
+    back.addEventListener("keydown", function (ev) { if (ev.key === "Enter") go(page.type === "entity" ? "entities" : "topics"); });
+    view.appendChild(back);
+
+    var kindText = page.type === "entity" ? (KIND_LABEL[page.entity_kind] || "实体") : "主题";
+    view.appendChild(el('<div class="detail-kind"><span class="dot ' + dotClass(page.entity_kind) + '"></span>' + kindText + "</div>"));
+    view.appendChild(el('<h1 class="detail-title">' + esc(page.title) + "</h1>"));
+    if (page.aliases && page.aliases.length) view.appendChild(el('<div class="detail-aliases">又称 ' + page.aliases.map(esc).join(" · ") + "</div>"));
+    if (page.summary) view.appendChild(el('<div class="lede">' + esc(page.summary) + "</div>"));
+    if (page.body_html) { var prose = el('<div class="prose"></div>'); prose.innerHTML = page.body_html; view.appendChild(prose); }
+
+    var related = page.related || [];
+    if (related.length) {
+      var rs = el('<section class="section"></section>');
+      rs.appendChild(el('<div class="section-label">关联 · ' + related.length + "</div>"));
+      related.forEach(function (r) {
+        var item = el('<a class="related-item" role="link" tabindex="0"></a>');
+        item.appendChild(el('<div class="related-head"><span class="dot ' + dotClass(r.entity_kind) + '"></span>' + esc(r.title) + '<span style="font-family:var(--mono);font-size:.6rem;letter-spacing:.15em;color:var(--ink-faint);text-transform:uppercase">' + (KIND_LABEL[r.type] || "") + "</span></div>"));
+        if (r.summary) item.appendChild(el('<div class="related-summary">' + esc(r.summary) + "</div>"));
+        var target = (r.type === "entity" ? "entity/" : "topic/") + r.id;
+        item.addEventListener("click", function () { go(target); });
+        item.addEventListener("keydown", function (ev) { if (ev.key === "Enter") go(target); });
+        rs.appendChild(item);
+      });
+      view.appendChild(rs);
+    }
+
+    var appear = page.timeline_appearances || [];
+    if (appear.length) {
+      var ts = el('<section class="section"></section>');
+      ts.appendChild(el('<div class="section-label">出现在时间线 · ' + appear.length + "</div>"));
+      appear.forEach(function (a) {
+        var mt = el('<div class="mini-time" role="link" tabindex="0"></div>');
+        mt.appendChild(el('<span class="d">' + esc(a.date) + (a.time ? " " + esc(a.time) : "") + "</span>"));
+        mt.appendChild(el("<span>" + esc(a.text) + "</span>"));
+        mt.addEventListener("click", function () { go("timeline"); });
+        ts.appendChild(mt);
+      });
+      view.appendChild(ts);
+    }
+
+    var sources = (page.sources || []).filter(function (s) { return rawById[s]; });
+    if (sources.length) {
+      var ss = el('<section class="section"></section>');
+      ss.appendChild(el('<div class="section-label">原料 · ' + sources.length + "</div>"));
+      var wrap = el('<div class="chip-wrap"></div>');
+      sources.forEach(function (sid) { wrap.appendChild(rawChip(sid)); });
+      ss.appendChild(wrap);
+      view.appendChild(ss);
+    }
+    app.replaceChildren(view);
+    window.scrollTo(0, 0);
+  }
+
+  // ---- raw --------------------------------------------------------------- //
+  function renderRaw(raw) {
+    var view = el('<div class="view"></div>');
+    var back = el('<span class="back" role="link" tabindex="0">← 返回</span>');
+    back.addEventListener("click", function () { history.length > 1 ? history.back() : go("timeline"); });
+    back.addEventListener("keydown", function (ev) { if (ev.key === "Enter") { history.length > 1 ? history.back() : go("timeline"); } });
+    view.appendChild(back);
+    view.appendChild(el('<div class="detail-kind"><span class="dot"></span>原料原文</div>'));
+    view.appendChild(el('<h1 class="detail-title">' + esc(raw.title) + "</h1>"));
+    var meta = [];
+    if (raw.event_date) meta.push(raw.event_date);
+    if (raw.tags && raw.tags.length) meta.push(raw.tags.map(function (t) { return "#" + t; }).join(" "));
+    if (meta.length) view.appendChild(el('<div class="detail-aliases">' + esc(meta.join("　·　")) + "</div>"));
+    var body = el('<div class="raw-body"></div>');
+    body.innerHTML = raw.body_html || '<p class="empty">（无内容）</p>';
+    view.appendChild(body);
+    app.replaceChildren(view);
+    window.scrollTo(0, 0);
+  }
+
+  // ---- router ------------------------------------------------------------ //
+  function setTab(route) {
+    var active = route === "entities" || route === "topics" || route === "timeline" ? route
+      : route.indexOf("entity/") === 0 ? "entities"
+      : route.indexOf("topic/") === 0 ? "topics"
+      : route.indexOf("raw/") === 0 ? "" : "timeline";
+    document.querySelectorAll("#tabs button").forEach(function (b) {
+      b.setAttribute("aria-current", b.dataset.route === active ? "true" : "false");
+    });
+  }
+
+  function route() {
+    var hash = location.hash.replace(/^#\/?/, "") || "timeline";
+    setTab(hash);
+    if (hash === "entities") return renderIndex("entities");
+    if (hash === "topics") return renderIndex("topics");
+    if (hash === "timeline") return renderTimeline();
+    if (hash.indexOf("entity/") === 0 || hash.indexOf("topic/") === 0) {
+      var page = byId[hash.split("/").slice(1).join("/")];
+      return page ? renderDetail(page) : renderTimeline();
+    }
+    if (hash.indexOf("raw/") === 0) {
+      var raw = rawById[hash.split("/").slice(1).join("/")];
+      return raw ? renderRaw(raw) : renderTimeline();
+    }
+    return renderTimeline();
+  }
+
+  document.querySelectorAll("#tabs button").forEach(function (b) {
+    b.addEventListener("click", function () { go(b.dataset.route); });
+  });
+  document.getElementById("brand").addEventListener("click", function () { go("timeline"); });
+  document.getElementById("brand").addEventListener("keydown", function (ev) { if (ev.key === "Enter") go("timeline"); });
+
+  var c = DATA.counts;
+  document.getElementById("foot-counts").textContent = c.entities + " 实体 · " + c.topics + " 主题 · " + c.timeline + " 天 · " + c.raw + " 原料";
+  document.getElementById("foot-gen").textContent = "生成于 " + (DATA.generated_at || "").slice(0, 16).replace("T", " ");
+
+  window.addEventListener("hashchange", route);
+  route();
+})();
+</script>
+</body>
+</html>
