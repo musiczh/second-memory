@@ -12,6 +12,7 @@ import typer
 from .compiler import (
     add_raw,
     all_raw_entries,
+    apply_merge_response,
     apply_response,
     build_compile_request,
     initialize,
@@ -25,6 +26,7 @@ from .compiler import (
 )
 from .config import KB_VERSION, resolve_repo
 from .errors import SecondMemoryError
+from .merge import build_merge_request
 from .recap import build_recap_request
 from .retriever import search_level1, search_level2_request
 from .reviewer import review_request
@@ -217,6 +219,31 @@ def recap(
                 focus = [sorted(entries, key=lambda e: (e.created, e.id))[-1].id]
         request = build_recap_request(target, focus, []) if focus else None
         emit(command, {"focus_raw_ids": focus, "llm_request": request}, json_output=True)
+    except Exception as exc:
+        fail(command, exc, json_output=True)
+
+
+@app.command()
+def merge(
+    emit_request: bool = typer.Option(False, "--emit-request"),
+    apply_response_flag: bool = typer.Option(False, "--apply-response"),
+    stdin: bool = typer.Option(False, "--stdin"),
+    repo: Optional[str] = typer.Option(None, "--repo"),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    command = "merge"
+    try:
+        target = resolve_repo(repo)
+        if emit_request:
+            request = build_merge_request(target)
+            pages = len(request["context"]["pages"]) if request else 0
+            emit(command, {"llm_request": request, "pages": pages}, json_output=True)
+            return
+        if apply_response_flag:
+            response = json.loads(read_stdin_text() if stdin else sys.stdin.read())
+            emit(command, apply_merge_response(target, response, command="merge"), json_output=True)
+            return
+        raise typer.BadParameter("use --emit-request or --apply-response --stdin")
     except Exception as exc:
         fail(command, exc, json_output=True)
 
