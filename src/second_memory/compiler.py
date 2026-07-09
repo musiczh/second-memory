@@ -215,7 +215,95 @@ def apply_response(repo: Path, response: dict[str, Any], *, command: str, replac
             from .recap import build_recap_request
 
             result["recap_request"] = build_recap_request(repo, consumed, sorted(set(updated_pages)))
+        # Offer a consolidation pass so entities/topics stay merged and refined over
+        # time. build_merge_request self-gates (returns None when there is nothing to
+        # consolidate). Imported lazily to avoid a circular import (merge -> compiler).
+        from .merge import build_merge_request
+
+        merge_request = build_merge_request(repo)
+        if merge_request is not None:
+            result["merge_request"] = merge_request
         return result
+
+
+def apply_merge_response(repo: Path, response: dict[str, Any], *, command: str = "merge") -> dict[str, Any]:
+    """Apply an entity/topic consolidation: write each canonical page and delete the
+    pages it absorbs. Does not consume raw entries, so ``compiled_raw`` is preserved."""
+    load_config(repo)
+    response = unwrap_response(response)
+    with RepoLock(repo):
+        store = storage_for(repo)
+        if isinstance(store, GitStorage):
+            store.assert_only_known_changes()
+        lookup = raw_lookup(repo)
+        pages_by_id = {page.id: page for page in list_compiled_pages(repo)}
+        validate_merge_response(response, pages_by_id, lookup)
+        canonical_pages: list[str] = []
+        deleted_pages: list[str] = []
+        merged_groups = 0
+        for group in response.get("merges", []):
+            canonical = dict(group["canonical"])
+            absorbed = [str(aid) for aid in group.get("absorbed", [])]
+            # Defensive: union the absorbed pages' sources into the canonical page so
+            # provenance is never lost if the model omitted some.
+            sources = set(canonical.get("sources", []))
+            for aid in absorbed:
+                sources.update(pages_by_id[aid].sources)
+            canonical["sources"] = sorted(sources)
+            page_id = str(canonical["id"])
+            page = page_from_entity(repo, canonical, lookup) if page_id.startswith("entity-") else page_from_topic(repo, canonical, lookup)
+            upsert_page(page)
+            canonical_pages.append(page.id)
+            for aid in absorbed:
+                old_path = pages_by_id[aid].path
+                if old_path != page.path and old_path.exists():
+                    old_path.unlink()
+                    deleted_pages.append(aid)
+            merged_groups += 1
+        refresh_index(repo)
+        # Merge does not consume raw entries; keep the recorded compiled_raw as is.
+        update_manifest(repo, load_manifest(repo).get("compiled_raw", []))
+        message = commit_message(command, [], sorted(set(canonical_pages)))
+        commit = store.commit_all(message)
+        return {
+            "merged_groups": merged_groups,
+            "canonical_pages": sorted(set(canonical_pages)),
+            "deleted_pages": sorted(set(deleted_pages)),
+            "commit": commit,
+        }
+
+
+def validate_merge_response(response: dict[str, Any], pages_by_id: dict[str, Page], lookup: dict[str, RawEntry]) -> None:
+    if "merges" not in response:
+        raise ValidationError("missing response field: merges")
+    seen_ids: set[str] = set()
+    for group in response.get("merges", []):
+        canonical = group.get("canonical")
+        if not isinstance(canonical, dict):
+            raise ValidationError("merge group missing canonical page")
+        canonical_id = str(canonical.get("id", ""))
+        if canonical_id.startswith("entity-"):
+            prefix, canonical_type = "entity-", "entity"
+        elif canonical_id.startswith("topic-"):
+            prefix, canonical_type = "topic-", "topic"
+        else:
+            raise ValidationError(f"invalid id prefix: {canonical_id}")
+        validate_page_item(canonical, prefix, lookup, set(lookup))
+        if canonical_type == "entity" and canonical.get("entity_kind") not in {"person", "project", "concept", "emotion"}:
+            raise ValidationError(f"invalid entity_kind for {canonical_id}")
+        absorbed = [str(aid) for aid in group.get("absorbed", [])]
+        for aid in absorbed:
+            if aid == canonical_id:
+                raise ValidationError(f"absorbed id equals canonical id: {aid}")
+            page = pages_by_id.get(aid)
+            if page is None:
+                raise ValidationError(f"unknown absorbed page id: {aid}")
+            if page.type != canonical_type:
+                raise ValidationError(f"absorbed page type mismatch for {aid}: {page.type} != {canonical_type}")
+        for page_id in [canonical_id, *absorbed]:
+            if page_id in seen_ids:
+                raise ValidationError(f"id appears in more than one merge group: {page_id}")
+            seen_ids.add(page_id)
 
 
 def unwrap_response(response: dict[str, Any]) -> dict[str, Any]:
@@ -476,7 +564,12 @@ def collect_sources(response: dict[str, Any]) -> set[str]:
 
 
 def commit_message(command: str, raw_ids: list[str], pages: list[str]) -> str:
-    subject = "feat(memory): 记录" if command in {"compile", "update"} else "chore(rebuild): 重建编译层"
+    if command == "merge":
+        subject = "refactor(memory): 合并实体/主题"
+    elif command in {"compile", "update"}:
+        subject = "feat(memory): 记录"
+    else:
+        subject = "chore(rebuild): 重建编译层"
     return (
         f"{subject} {len(raw_ids)} raw -> {len(pages)} pages\n\n"
         f"raw-ids: {', '.join(raw_ids) if raw_ids else 'none'}\n"

@@ -70,6 +70,29 @@ def recap_response_schema() -> dict[str, Any]:
     }
 
 
+def merge_response_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "required": ["merges"],
+        "properties": {
+            "merges": [{
+                "canonical": {
+                    "op": "upsert",
+                    "id": "entity-...|topic-...",
+                    "entity_kind": "person|project|concept|emotion",
+                    "title": "页面标题",
+                    "aliases": ["别名"],
+                    "summary": "一句话摘要",
+                    "body_markdown": "## 概述\n...",
+                    "sources": ["raw-..."],
+                },
+                "absorbed": ["entity-...|topic-..."],
+                "reason": "为什么合并或精炼",
+            }],
+        },
+    }
+
+
 def llm_request(task: str, agents_rules: str, context: dict[str, Any], instructions: str, response_schema: dict[str, Any]) -> dict[str, Any]:
     return {
         "task": task,

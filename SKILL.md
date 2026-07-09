@@ -12,6 +12,7 @@ This skill connects the host agent to a local Markdown knowledge base through th
 - Answer in the current conversation first. Use the knowledge base as personal context, not as the only source.
 - Before saving content that was not explicitly requested with phrases like "记一下" or "存入知识库", ask the user for confirmation.
 - After every successful save, do not stop at "已入库". Give the user a short recap that connects the new entry to their accumulated history (recurring themes, related people/projects, on-this-day echoes, actionable follow-ups). The `compile`/`update` apply step returns a `recap_request`; reason over it and present the recap.
+- After the recap, if the apply result contains a `merge_request`, reason over it to consolidate entities and topics. Only apply a merge when you are confident two pages refer to the same thing (or a topic clearly needs refining); run `merge --apply-response` and then briefly tell the user what was merged. If nothing is confidently mergeable, skip it — do not force merges.
 - Never send the whole raw archive to the model. Use `search --level 1` first, then only request deeper context when needed.
 - `index.md` is the compact semantic entry point for entities and topics. Daily timeline pages are used by `review`, not by the level-1 index.
 - The CLI never calls an LLM. For compile, rebuild, review, update, and level-2 search, run `--emit-request`, perform the requested reasoning yourself, then pass the structured JSON back with `--apply-response --stdin` when the command supports it.
@@ -70,6 +71,46 @@ second-memory recap --raw-id "$RAW_ID" --json
 ```
 
 Reason over `data.llm_request` the same way, then present the recap. When `llm_request` is null there is nothing to recap.
+
+### Entity/Topic Merge(实体与主题合并)
+
+The knowledge base grows one page per distinct name, so over time the same
+person/project/concept ends up split across several entity pages and topics
+fragment. Consolidation folds co-referent entities together (e.g. 5 pages → 2),
+merges mergeable topics, and refines topic definitions to fit accumulated content.
+
+This runs automatically after each save: `compile --apply-response` (and
+`update --apply-response`) attaches a `merge_request` whenever there are at least
+two entity/topic pages. Read `data.merge_request`, produce JSON matching its
+`response_schema`, and apply only the confident merges:
+
+```bash
+printf '%s' "$MERGE_JSON" | second-memory merge --apply-response --stdin --json
+```
+
+To run a full-library consolidation on demand (independent of a save):
+
+```bash
+second-memory merge --emit-request --json     # bundles every entity/topic page
+printf '%s' "$MERGE_JSON" | second-memory merge --apply-response --stdin --json
+```
+
+Each element of `merges` is one `canonical` page plus the ids it `absorbed`:
+
+- **Merge**: `canonical` is the surviving page (any of the group's ids), `absorbed`
+  lists the pages folded into it (their files are deleted).
+- **Refine only**: `absorbed` is `[]`; rewrite the same id's title/summary/body/aliases.
+- **Rename**: `canonical.id` is the new id, `absorbed` lists the old id.
+
+Rules: `absorbed` ids must be existing pages of the same type as `canonical`;
+`canonical.sources` must union in every absorbed page's sources (the CLI also unions
+defensively); ids must not repeat across groups; base decisions only on the given
+pages. Report `data.merged_groups`, `canonical_pages`, and `deleted_pages`.
+
+Consolidation is **not persisted as an alias ledger**: a later `rebuild`/`update`
+that recompiles the wiki from raw will re-split the merged pages, but that apply
+step will again carry a `merge_request`, so re-running the merge restores the
+consolidation. Nothing is lost — it just costs one more round trip.
 
 ### Opportunistic Save
 
