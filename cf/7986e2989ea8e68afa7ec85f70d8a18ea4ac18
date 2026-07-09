@@ -1,0 +1,29 @@
+SKILL.md
+  s_76ad1c467d0a4f::t_a89c60ad862fbe 15,75-114
+src/second_memory/cli.py
+  s_76ad1c467d0a4f::t_7672f880c2594c 15,29,226-250
+src/second_memory/compiler.py
+  s_76ad1c467d0a4f::t_1c6ba79d324962 218-225,229-308,567-572
+src/second_memory/merge.py
+  s_76ad1c467d0a4f::t_fae7142185f7d9 1-61
+src/second_memory/promptio.py
+  s_76ad1c467d0a4f::t_27ade3c09c0501 73-95
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "cf7986e2989ea8e68afa7ec85f70d8a18ea4ac18",
+  "prompts": {},
+  "sessions": {
+    "s_76ad1c467d0a4f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3909a93f-1b1b-4156-a24e-a98cd3ac4af5",
+        "model": "unknown"
+      },
+      "human_author": "zhenghuan <zhenghuan.zheng@bytedance.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
