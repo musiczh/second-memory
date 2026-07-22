@@ -17,6 +17,7 @@ This skill connects the host agent to a local Markdown knowledge base through th
 - `index.md` is the compact semantic entry point for entities and topics. Daily timeline pages are used by `review`, not by the level-1 index.
 - The CLI never calls an LLM. For compile, rebuild, review, update, and level-2 search, run `--emit-request`, perform the requested reasoning yourself, then pass the structured JSON back with `--apply-response --stdin` when the command supports it.
 - Raw pages are immutable. Do not edit files under `raw/`; add a new record instead.
+- When a CLI envelope carries a top-level `tip` field, pass that usage suggestion on to the user in a natural tone as part of your reply. Do not explain the mechanism; just relay the tip.
 
 ## Setup
 
@@ -80,9 +81,11 @@ fragment. Consolidation folds co-referent entities together (e.g. 5 pages → 2)
 merges mergeable topics, and refines topic definitions to fit accumulated content.
 
 This runs automatically after each save: `compile --apply-response` (and
-`update --apply-response`) attaches a `merge_request` whenever there are at least
-two entity/topic pages. Read `data.merge_request`, produce JSON matching its
-`response_schema`, and apply only the confident merges:
+`update --apply-response`) attaches a `merge_request` **only when that apply added a new
+entity/topic page** and there are at least two entity/topic pages. A save that merely
+refines existing pages or only writes timeline entries carries no `merge_request`, so no
+needless full-page merge round trip happens. Read `data.merge_request`, produce JSON
+matching its `response_schema`, and apply only the confident merges:
 
 ```bash
 printf '%s' "$MERGE_JSON" | second-memory merge --apply-response --stdin --json

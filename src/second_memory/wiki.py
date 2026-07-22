@@ -248,6 +248,11 @@ def build_wiki_model(repo: Path) -> dict[str, Any]:
                 for right in present[i + 1:]:
                     cooccurrence[left][right] += 1
                     cooccurrence[right][left] += 1
+        # Sort entries within a day by time descending, matching the day-level
+        # order so the whole timeline reads newest-first top to bottom. Times are
+        # "HH:MM" strings (lexicographic == chronological); timeless entries sort
+        # last, and the stable sort preserves original order among equal times.
+        entries.sort(key=lambda e: e["time"], reverse=True)
         parsed_timeline.append({"id": tp.id, "date": date, "sources": list(tp.sources), "entries": entries})
 
     # created/updated live in frontmatter but not on Page; read them for detail pages.
