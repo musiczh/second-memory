@@ -31,14 +31,17 @@ from .recap import build_recap_request
 from .retriever import search_level1, search_level2_request
 from .reviewer import review_request
 from .store.git_store import GitStorage
+from .tips import next_tip
 from .utils import json_dumps
 from .wiki import build_wiki_html
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 
 
-def emit(command: str, data: object, json_output: bool = True) -> None:
+def emit(command: str, data: object, json_output: bool = True, *, tip: object = None) -> None:
     payload = {"ok": True, "command": command, "data": data, "error": None}
+    if tip:
+        payload["tip"] = tip
     typer.echo(json_dumps(payload) if json_output else payload)
 
 
@@ -131,7 +134,7 @@ def compile(
             return
         if apply_response_flag:
             response = json.loads(read_stdin_text() if stdin else sys.stdin.read())
-            emit(command, apply_response(target, response, command="compile", replace_compiled=False), json_output=True)
+            emit(command, apply_response(target, response, command="compile", replace_compiled=False), json_output=True, tip=next_tip(target))
             return
         raise typer.BadParameter("use --emit-request or --apply-response --stdin")
     except Exception as exc:
@@ -155,7 +158,7 @@ def rebuild(
             return
         if apply_response_flag:
             response = json.loads(read_stdin_text() if stdin else sys.stdin.read())
-            emit(command, apply_response(target, response, command="rebuild", replace_compiled=True), json_output=True)
+            emit(command, apply_response(target, response, command="rebuild", replace_compiled=True), json_output=True, tip=next_tip(target))
             return
         raise typer.BadParameter("use --emit-request or --apply-response --stdin")
     except Exception as exc:
@@ -281,7 +284,7 @@ def update(
             # Rebuild (replace) when the version drifted or pages drifted; only an
             # incremental compile of fresh pending entries keeps the existing wiki.
             replace = version_drift(target) or bool(manifest_drift(target)) or not read_pending(target)
-            emit(command, apply_response(target, response, command="update", replace_compiled=replace), json_output=True)
+            emit(command, apply_response(target, response, command="update", replace_compiled=replace), json_output=True, tip=next_tip(target))
             return
         raise typer.BadParameter("use --emit-request or --apply-response --stdin")
     except Exception as exc:

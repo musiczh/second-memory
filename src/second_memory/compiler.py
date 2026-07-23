@@ -179,18 +179,27 @@ def apply_response(repo: Path, response: dict[str, Any], *, command: str, replac
         response_sources = collect_sources(response)
         if not replace_compiled and pending_ids and not (response_sources & pending_ids):
             raise ValidationError("response does not consume any pending raw")
+        # Track pre-existing entity/topic pages so we only offer a merge pass when this
+        # apply actually introduces a new page; refining an existing page never changes
+        # the consolidation topology.
+        existing_page_ids = {page.id for page in list_compiled_pages(repo) if page.type in {"entity", "topic"}}
         if replace_compiled:
             if (repo / "wiki").exists():
                 shutil.rmtree(repo / "wiki")
             for directory in ["wiki/entities", "wiki/topics", "wiki/timeline"]:
                 (repo / directory).mkdir(parents=True, exist_ok=True)
         updated_pages: list[str] = []
+        added_new_page = False
         for item in response.get("entities", []):
             page = page_from_entity(repo, item, lookup)
+            if page.id not in existing_page_ids:
+                added_new_page = True
             upsert_page(page)
             updated_pages.append(page.id)
         for item in response.get("topics", []):
             page = page_from_topic(repo, item, lookup)
+            if page.id not in existing_page_ids:
+                added_new_page = True
             upsert_page(page)
             updated_pages.append(page.id)
         for item in response.get("timeline", []):
@@ -216,13 +225,17 @@ def apply_response(repo: Path, response: dict[str, Any], *, command: str, replac
 
             result["recap_request"] = build_recap_request(repo, consumed, sorted(set(updated_pages)))
         # Offer a consolidation pass so entities/topics stay merged and refined over
-        # time. build_merge_request self-gates (returns None when there is nothing to
-        # consolidate). Imported lazily to avoid a circular import (merge -> compiler).
-        from .merge import build_merge_request
+        # time, but only when this apply actually added a new page (or rebuilt the whole
+        # layer). Refining existing pages alone cannot create new merge opportunities, so
+        # skipping saves an expensive full-page merge request. build_merge_request also
+        # self-gates (returns None with <2 pages). Imported lazily to avoid a circular
+        # import (merge -> compiler).
+        if replace_compiled or added_new_page:
+            from .merge import build_merge_request
 
-        merge_request = build_merge_request(repo)
-        if merge_request is not None:
-            result["merge_request"] = merge_request
+            merge_request = build_merge_request(repo)
+            if merge_request is not None:
+                result["merge_request"] = merge_request
         return result
 
 
