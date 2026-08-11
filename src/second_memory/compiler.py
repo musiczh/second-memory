@@ -43,6 +43,7 @@ from .promptio import compile_response_schema, llm_request
 from .resolver import Resolver, normalize_name
 from .store.git_store import GitStorage
 from .store.plain_store import PlainFSStorage
+from .tips import next_tip
 from .transaction import KnowledgeTransaction, recover_transaction, transaction_state
 from .topics import validate_materialized_topic_contracts, validate_topic_plan
 from .utils import json_dumps, now_local, parse_date, parse_temporal_anchor, relpath, sha256_text, short_hash, slugify
@@ -99,6 +100,7 @@ def empty_manifest() -> dict[str, Any]:
         "redirects": {},
         "candidates": [],
         "consolidation": {"pending_raw": [], "memo": "", "last_session_id": None},
+        "tips_seen": [],
         "rebuild": {"phase": "idle", "ordered_raw_ids": [], "cursor": 0, "total": 0, "generation": None, "last_session_id": None},
         "applied_session_id": None,
     }
@@ -703,6 +705,7 @@ def initialize_rebuild_workspace(repo: Path) -> Path:
         "source_kb_version": source_manifest.get("kb_version"),
     }
     manifest = empty_manifest()
+    manifest["tips_seen"] = sorted(set(str(value) for value in source_manifest.get("tips_seen", [])))
     manifest["rebuild"] = state
     (workspace / ".kb" / "manifest.json").write_text(json_dumps(manifest) + "\n", encoding="utf-8")
     (workspace / ".kb" / "pending.jsonl").write_text("", encoding="utf-8")
@@ -901,6 +904,11 @@ def apply_response(repo: Path, response: dict[str, Any], *, command: str) -> dic
             next_pending = pending
             compiled_raw = sorted(set(old_manifest.get("compiled_raw", [])))
 
+        tip = None
+        tips_seen = sorted(set(str(value) for value in old_manifest.get("tips_seen", [])))
+        if consumed:
+            tip, tips_seen = next_tip(tips_seen)
+
         consolidation = next_consolidation_state(old_manifest, plan, consumed, entries)
         resolved_candidate_targets = {
             str(action.get("target_id"))
@@ -946,6 +954,7 @@ def apply_response(repo: Path, response: dict[str, Any], *, command: str) -> dic
                 redirects=redirects,
                 candidates=candidates,
                 consolidation=consolidation,
+                tips_seen=tips_seen,
                 rebuild=rebuild,
                 session_id=plan.session_id,
                 raw_entries=lookup,
@@ -989,6 +998,8 @@ def apply_response(repo: Path, response: dict[str, Any], *, command: str) -> dic
             from .recap import build_recap_request
 
             result["recap_request"] = build_recap_request(repo, consumed, sorted(affected))
+        if tip:
+            result["tip"] = tip
         return result
 
 
@@ -1728,6 +1739,7 @@ def build_manifest(
     redirects: dict[str, str],
     candidates: list[dict[str, Any]],
     consolidation: dict[str, Any],
+    tips_seen: list[str],
     rebuild: dict[str, Any],
     session_id: str,
     raw_entries: dict[str, RawEntry],
@@ -1760,6 +1772,7 @@ def build_manifest(
         "redirects": dict(sorted(redirects.items())),
         "candidates": candidates,
         "consolidation": consolidation,
+        "tips_seen": sorted(set(tips_seen)),
         "rebuild": rebuild,
         "applied_session_id": session_id,
     }

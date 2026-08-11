@@ -6,6 +6,7 @@ dist/
 build/
 *.egg-info/
 lark_auth_qr.png
+/.claude/
 /log/
 /.capcode/config.yaml
 /.capcode-workspace/p2c/*/.temp/

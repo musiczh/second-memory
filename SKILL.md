@@ -12,6 +12,7 @@ This skill connects the host Agent to a local Markdown + Git personal knowledge 
 - Answer the current conversation first. Treat knowledge-base content as the user's historical context, never as authoritative external truth.
 - When the user explicitly says “记一下”, “保存”, or “存入知识库”, save directly. For merely durable conversation content, ask for confirmation before running any write command.
 - Every successful save must end with a recap based on `data.recap_request`; do not stop after reporting a CLI success.
+- When a successful apply envelope carries a top-level `tip`, relay that one-time usage suggestion naturally after the recap. Do not explain the tip mechanism. The CLI records seen tips transactionally in the manifest; never create or edit a separate tips state file.
 - Never edit a file under `raw/` directly. Use `add` for new user content. The CLI may add validated metadata while preserving the raw body hash and restoring read-only permissions.
 - Never send the whole raw archive for ordinary search or consolidation. Search Level 1 first; request Level 2 only for relevant candidates. Consolidation uses the bounded batch supplied by the CLI.
 - The CLI never calls an LLM. For compile, rebuild, consolidate, update, review, and Level-2 search, emit a request, reason over only that request, then return JSON matching its `response_schema`.
@@ -82,7 +83,7 @@ printf '%s' "$COMPILE_PLAN_JSON" | \
   second-memory compile --apply-response --stdin --json
 ```
 
-Report the saved raw ID, affected nodes, commit, and pending count. Then reason over `data.recap_request` and present a short connected recap.
+Report the saved raw ID, affected nodes, commit, and pending count. Then reason over `data.recap_request` and present a short connected recap. If the same envelope includes a top-level `tip`, relay it naturally after the recap.
 
 ## Opportunistic Save
 

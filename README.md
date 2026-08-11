@@ -72,7 +72,7 @@ printf '%s' "$COMPILE_PLAN_JSON" | \
   second-memory compile --apply-response --stdin --json
 ```
 
-apply 成功后，Agent 还必须根据 `data.recap_request` 向用户提供关联历史的回顾，不能只回复“已保存”。
+apply 成功后，Agent 还必须根据 `data.recap_request` 向用户提供关联历史的回顾，不能只回复“已保存”。若成功响应同时包含顶层 `tip`，Agent 应把这条一次性使用建议自然带给用户；提示的已读状态随同本次知识库事务写入 manifest，不额外产生未提交文件。
 
 ### 个人上下文检索
 
@@ -215,7 +215,7 @@ knowledge-base/
 └── .kb/
     ├── config.yaml
     ├── pending.jsonl
-    ├── manifest.json       # schema 2、哈希、边、redirect、候选和批次状态
+    ├── manifest.json       # schema 2、哈希、边、redirect、候选、批次与已读提示状态
     └── transaction.json    # 仅在未完成事务存在时出现
 ```
 

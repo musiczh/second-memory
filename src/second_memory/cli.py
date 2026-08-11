@@ -45,7 +45,12 @@ app = typer.Typer(no_args_is_help=True, add_completion=False)
 
 
 def emit(command: str, data: object, json_output: bool = True) -> None:
+    tip = data.get("tip") if isinstance(data, dict) else None
+    if tip:
+        data = {key: value for key, value in data.items() if key != "tip"}
     payload = {"ok": True, "command": command, "data": data, "error": None}
+    if tip:
+        payload["tip"] = tip
     typer.echo(json_dumps(payload) if json_output else payload)
 
 
