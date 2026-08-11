@@ -39,6 +39,67 @@ class WikiTest(RepositoryTestCase):
             encoding="utf-8",
         )
 
+    def _write_candidates(self, candidates: list[dict[str, object]]) -> None:
+        manifest = load_manifest(self.repo)
+        manifest["candidates"] = candidates
+        (self.repo / ".kb" / "manifest.json").write_text(
+            json.dumps(manifest, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+    def test_resolved_topic_candidates_are_hidden_from_governance(self) -> None:
+        self._write_raw("raw-candidate", "候选来源", "2026-08-03")
+        self._write_node("topic", "topic-materialized", {"sources": ["raw-candidate"]})
+        self._write_node("statement", "statement-open", {
+            "sources": ["raw-candidate"],
+            "current_state": "仍在观察的候选成员",
+        })
+        self._write_candidates([
+            {
+                "candidate_id": "candidate-materialized",
+                "kind": "topic",
+                "node_ids": ["topic-materialized"],
+                "title": "已成型主题",
+                "topic_kind": "life_domain",
+                "status": "materialized",
+                "reason": "已升级为真实主题节点。",
+                "confidence": 0.99,
+            },
+            {
+                "candidate_id": "candidate-rejected",
+                "kind": "topic",
+                "node_ids": ["statement-open"],
+                "title": "被否决主题",
+                "topic_kind": "life_domain",
+                "status": "rejected",
+                "reason": "审计后认定成员只共享宽泛表述。",
+                "confidence": 0.4,
+            },
+            {
+                "candidate_id": "candidate-watching",
+                "kind": "topic",
+                "node_ids": ["statement-open"],
+                "title": "观察中主题",
+                "topic_kind": "life_domain",
+                "status": "watching",
+                "reason": "证据尚不充分，继续观察。",
+                "confidence": 0.6,
+            },
+        ])
+
+        model = build_wiki_model(self.repo)
+
+        self.assertEqual(1, model["counts"]["candidates"])
+        self.assertEqual(
+            ["candidate-watching"],
+            [candidate["candidate_id"] for candidate in model["candidates"]],
+        )
+
+        html = render_html(model)
+        self.assertIn("观察中主题", html)
+        self.assertNotIn("已升级为真实主题节点。", html)
+        self.assertNotIn("审计后认定成员只共享宽泛表述。", html)
+
     def test_markdown_renderer_escapes_html_and_unsafe_links(self) -> None:
         rendered = render_markdown("# 标题\n\n<script>alert(1)</script>\n\n[危险](javascript:alert(1)) [安全](https://example.com)")
 

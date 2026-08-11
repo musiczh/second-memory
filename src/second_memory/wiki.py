@@ -37,6 +37,10 @@ STATIC_START = "<!-- WIKI_STATIC_START -->"
 STATIC_END = "<!-- WIKI_STATIC_END -->"
 MAX_RELATED = 10
 ENTITY_CONTEXT_EDGE_TYPES = {"involves", "about", "instance_of"}
+# Topic candidates carry a lifecycle status; once materialized (promoted to a real
+# topic node) or rejected they are resolved and must not surface as open governance
+# items. Non-topic candidates (merge/split) have no status and stay unresolved.
+RESOLVED_CANDIDATE_STATUSES = {"materialized", "rejected"}
 
 _CODE = re.compile(r"`([^`]+?)`")
 _LINK = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
@@ -394,6 +398,15 @@ def _raw_model(raw: RawEntry, nodes: dict[str, Node], edges: list[dict[str, Any]
     }
 
 
+def _open_candidates(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return only unresolved candidates worth surfacing as governance items."""
+    return [
+        candidate
+        for candidate in manifest.get("candidates", [])
+        if str(candidate.get("status", "")) not in RESOLVED_CANDIDATE_STATUSES
+    ]
+
+
 def build_wiki_model(repo: Path) -> dict[str, Any]:
     load_config(repo)
     manifest = load_manifest(repo)
@@ -402,6 +415,7 @@ def build_wiki_model(repo: Path) -> dict[str, Any]:
     edges = _normalize_edges(nodes, manifest)
     timeline, appearances = _timeline_model(repo, nodes, raws)
     manifest_schema = int(manifest.get("schema", 1))
+    open_candidates = _open_candidates(manifest)
     node_values = [
         _node_model(node, nodes, raws, edges, appearances, manifest_schema)
         for node in sorted(nodes.values(), key=lambda value: (value.type, value.title, value.id))
@@ -418,7 +432,7 @@ def build_wiki_model(repo: Path) -> dict[str, Any]:
         "edges": len(edges),
         "timeline": len(timeline),
         "raw": len(raws),
-        "candidates": len(manifest.get("candidates", [])),
+        "candidates": len(open_candidates),
         "redirects": len(manifest.get("redirects", {})),
     })
     def event_confidence(node: Node) -> float:
@@ -471,7 +485,7 @@ def build_wiki_model(repo: Path) -> dict[str, Any]:
         "timeline": timeline,
         "raws": raw_values,
         "edges": edges,
-        "candidates": list(manifest.get("candidates", [])),
+        "candidates": open_candidates,
         "redirects": dict(manifest.get("redirects", {})),
     }
 
