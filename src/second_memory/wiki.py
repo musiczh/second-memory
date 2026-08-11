@@ -37,6 +37,10 @@ STATIC_START = "<!-- WIKI_STATIC_START -->"
 STATIC_END = "<!-- WIKI_STATIC_END -->"
 MAX_RELATED = 10
 ENTITY_CONTEXT_EDGE_TYPES = {"involves", "about", "instance_of"}
+# Topic candidates carry a lifecycle status; once materialized (promoted to a real
+# topic node) or rejected they are resolved and must not surface as open governance
+# items. Non-topic candidates (merge/split) have no status and stay unresolved.
+RESOLVED_CANDIDATE_STATUSES = {"materialized", "rejected"}
 
 _CODE = re.compile(r"`([^`]+?)`")
 _LINK = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
@@ -394,6 +398,15 @@ def _raw_model(raw: RawEntry, nodes: dict[str, Node], edges: list[dict[str, Any]
     }
 
 
+def _open_candidates(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return only unresolved candidates worth surfacing as governance items."""
+    return [
+        candidate
+        for candidate in manifest.get("candidates", [])
+        if str(candidate.get("status", "")) not in RESOLVED_CANDIDATE_STATUSES
+    ]
+
+
 def build_wiki_model(repo: Path) -> dict[str, Any]:
     load_config(repo)
     manifest = load_manifest(repo)
@@ -402,6 +415,7 @@ def build_wiki_model(repo: Path) -> dict[str, Any]:
     edges = _normalize_edges(nodes, manifest)
     timeline, appearances = _timeline_model(repo, nodes, raws)
     manifest_schema = int(manifest.get("schema", 1))
+    open_candidates = _open_candidates(manifest)
     node_values = [
         _node_model(node, nodes, raws, edges, appearances, manifest_schema)
         for node in sorted(nodes.values(), key=lambda value: (value.type, value.title, value.id))
@@ -418,7 +432,7 @@ def build_wiki_model(repo: Path) -> dict[str, Any]:
         "edges": len(edges),
         "timeline": len(timeline),
         "raw": len(raws),
-        "candidates": len(manifest.get("candidates", [])),
+        "candidates": len(open_candidates),
         "redirects": len(manifest.get("redirects", {})),
     })
     def event_confidence(node: Node) -> float:
@@ -471,7 +485,7 @@ def build_wiki_model(repo: Path) -> dict[str, Any]:
         "timeline": timeline,
         "raws": raw_values,
         "edges": edges,
-        "candidates": list(manifest.get("candidates", [])),
+        "candidates": open_candidates,
         "redirects": dict(manifest.get("redirects", {})),
     }
 
@@ -599,16 +613,31 @@ def render_static_overview(model: dict[str, Any]) -> str:
         )
 
     def node_row(node: dict[str, Any]) -> str:
-        state = node.get("current_state") or node.get("status") or node.get("summary") or ""
-        detail = node.get("detail") or node.get("summary") or ""
+        reading = (node.get("attrs") or {}).get("reading")
+        reading = reading if isinstance(reading, dict) else {}
+        lead = reading.get("tldr") or node.get("current_state") or node.get("status") or node.get("summary") or ""
+        narrative = reading.get("narrative") or node.get("detail") or node.get("summary") or ""
+        highlights = reading.get("highlights") if isinstance(reading.get("highlights"), list) else []
+        highlights_html = (
+            '<ul class="row-highlights">'
+            + "".join(f"<li>{escape(item)}</li>" for item in highlights)
+            + "</ul>"
+        ) if highlights else ""
+        original_detail = node.get("detail") or ""
+        original_fold = (
+            f'<details class="raw-fold"><summary>完整综合（原始 detail）</summary>'
+            f'<div class="prose">{render_detail(str(original_detail))}</div></details>'
+        ) if (reading.get("narrative") and original_detail) else ""
         sources = "、".join(escape(source["title"]) for source in node.get("sources", []))
         return (
             '<details class="relation-row">'
             f'<summary>{escape(type_labels.get(node["type"], node["type"]))} · <strong>{escape(node["title"])}</strong></summary>'
-            f'<p class="row-summary">{escape(state)}</p>'
+            f'<p class="row-summary">{escape(lead)}</p>'
             f'{topic_reading_html(node)}'
             f'{topic_contract_html(node)}'
-            f'<div class="prose">{render_detail(str(detail))}</div>'
+            f'<div class="prose">{render_detail(str(narrative))}</div>'
+            f'{highlights_html}'
+            f'{original_fold}'
             f'<div class="row-meta" style="text-align:left">{len(node.get("sources", []))} 来源'
             f'{(" · " + sources) if sources else ""}</div>'
             "</details>"

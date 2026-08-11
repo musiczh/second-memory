@@ -225,6 +225,105 @@
   .empty { padding: 42px 0; color: var(--faint); text-align: center; font: 18px/1.6 var(--serif); }
   footer { border-top: 1px solid var(--line); padding: 22px 0 36px; color: var(--faint); font: 10px/1.5 var(--mono); }
   footer .shell { display: flex; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+
+  /* ---- 书本式详情页:浮动目录 + 阅读列 ---- */
+  .doc-grid { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 48px; align-items: start; }
+  .toc { position: sticky; top: 92px; align-self: start; }
+  .toc-eyebrow { color: var(--faint); font: 10px/1.3 var(--mono); letter-spacing: .16em; text-transform: uppercase; margin-bottom: 14px; }
+  .toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+  .toc a { display: block; padding: 7px 12px; border-left: 2px solid var(--line); color: var(--muted); font-size: 13.5px; transition: color .15s, border-color .15s, background .15s; }
+  .toc a:hover { color: var(--ink); }
+  .toc a.active { color: var(--accent); border-left-color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, transparent); font-weight: 600; }
+  .toc a small { display: block; color: var(--faint); font: 10px/1.3 var(--mono); margin-top: 2px; }
+  .reading { max-width: 760px; }
+  section.block { scroll-margin-top: 96px; }
+  .rel-col { display: grid; grid-template-columns: 1fr 1fr; gap: 26px; }
+  .rel-col h3 { margin: 0 0 8px; font: 600 13px/1.4 var(--sans); color: var(--muted); }
+  .rel-kind { display: inline-block; margin-bottom: 5px; padding: 2px 8px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); font: 11px/1.5 var(--mono); }
+  .rel-note { margin-top: 5px; color: var(--muted); font-size: 12.5px; }
+  .evi-item { padding: 14px 0; border-bottom: 1px solid var(--line); }
+  .evi-item:last-child { border-bottom: 0; }
+  .evi-claim { font: 15.5px/1.7 var(--serif); margin-bottom: 8px; }
+  .uncertain { padding-left: 20px; margin: 0; }
+  .uncertain li { margin-bottom: 8px; font: 15px/1.7 var(--sans); color: var(--muted); }
+
+  /* ① 综述导读 */
+  .doc-title { margin: 0 0 20px; font: 600 clamp(30px, 4.6vw, 46px)/1.16 var(--serif); letter-spacing: -.01em; }
+  .tldr { position: relative; margin: 0 0 20px; padding: 22px 26px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 14px; background: var(--surface); box-shadow: var(--shadow); }
+  .tldr .lead-label { display: block; margin-bottom: 8px; color: var(--accent); font: 10px/1.3 var(--mono); letter-spacing: .14em; text-transform: uppercase; }
+  .tldr p { margin: 0; font: 20px/1.7 var(--serif); }
+  .tldr.topic-question { border-left-color: var(--topic); }
+  .tldr.topic-question .lead-label { color: var(--topic); }
+  .pills { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; padding: 5px 12px; background: var(--surface); color: var(--muted); font-size: 13px; }
+  .pill b { color: var(--ink); font-weight: 600; }
+  .pill.accent { border-color: color-mix(in srgb, var(--accent) 40%, transparent); color: var(--accent); }
+
+  /* ② 精读 */
+  .highlights { margin: 26px 0 4px; padding: 18px 20px 18px 22px; border-radius: 12px; background: color-mix(in srgb, var(--accent) 6%, transparent); border: 1px solid var(--accent-soft); }
+  .highlights .h-label { color: var(--accent); font: 10px/1.3 var(--mono); letter-spacing: .12em; text-transform: uppercase; margin-bottom: 10px; }
+  .highlights ul { margin: 0; padding-left: 20px; }
+  .highlights li { margin-bottom: 8px; font: 15.5px/1.7 var(--sans); }
+  .highlights li:last-child { margin-bottom: 0; }
+
+  /* 折叠保留的原始内容 */
+  details.raw-fold { margin-top: 20px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); overflow: hidden; }
+  details.raw-fold > summary { list-style: none; cursor: pointer; padding: 12px 16px; color: var(--muted); font: 12px/1.4 var(--mono); display: flex; align-items: center; gap: 8px; }
+  details.raw-fold > summary::-webkit-details-marker { display: none; }
+  details.raw-fold > summary::before { content: "▸"; color: var(--faint); transition: transform .15s; }
+  details.raw-fold[open] > summary::before { transform: rotate(90deg); }
+  details.raw-fold > summary:hover { color: var(--accent); }
+  details.raw-fold .fold-body { padding: 4px 18px 16px; border-top: 1px solid var(--line); }
+  .fold-body .prose { font-size: 16px; line-height: 1.85; }
+
+  /* ④⑤ 分组折叠区块 */
+  details.group { margin-top: 22px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); box-shadow: var(--shadow); overflow: hidden; }
+  details.group > summary { list-style: none; cursor: pointer; padding: 17px 20px; display: flex; align-items: center; gap: 12px; }
+  details.group > summary::-webkit-details-marker { display: none; }
+  details.group > summary .chev { color: var(--faint); transition: transform .18s; }
+  details.group[open] > summary .chev { transform: rotate(90deg); }
+  details.group > summary h2 { margin: 0; font: 600 18px/1.3 var(--serif); flex: 1; }
+  details.group > summary .count { color: var(--faint); font: 11px/1.3 var(--mono); }
+  details.group > summary:hover h2 { color: var(--accent); }
+  .group-body { padding: 4px 20px 22px; border-top: 1px solid var(--line); }
+  .subhead { margin: 20px 0 10px; color: var(--faint); font: 10px/1.3 var(--mono); letter-spacing: .12em; text-transform: uppercase; }
+  .subhead:first-child { margin-top: 6px; }
+
+  /* topic facet 分组 */
+  .facet { margin-bottom: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-solid); overflow: hidden; }
+  .facet:last-child { margin-bottom: 0; }
+  .facet > summary { list-style: none; cursor: pointer; padding: 15px 17px; display: flex; gap: 12px; align-items: flex-start; }
+  .facet > summary::-webkit-details-marker { display: none; }
+  .facet > summary .chev { color: var(--faint); margin-top: 4px; transition: transform .18s; }
+  .facet[open] > summary .chev { transform: rotate(90deg); }
+  .facet .facet-name { font: 600 16px/1.4 var(--serif); }
+  .facet .facet-sum { margin-top: 4px; color: var(--muted); font-size: 13.5px; }
+  .facet .facet-count { margin-left: auto; color: var(--faint); font: 11px/1.3 var(--mono); white-space: nowrap; }
+  .facet-body { padding: 2px 17px 16px 44px; }
+  .member { padding: 11px 0; border-top: 1px solid var(--line); }
+  .member-reason { margin-top: 5px; color: var(--muted); font-size: 13px; line-height: 1.65; }
+  .member-excerpt { margin-top: 6px; padding-left: 12px; border-left: 2px solid var(--line); color: var(--faint); font: 12.5px/1.6 var(--serif); }
+
+  /* ⑥ 元信息 */
+  details.meta { margin-top: 40px; border-top: 1px solid var(--line); padding-top: 8px; }
+  details.meta > summary { list-style: none; cursor: pointer; padding: 12px 0; color: var(--faint); font: 11px/1.3 var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+  details.meta > summary::-webkit-details-marker { display: none; }
+  details.meta > summary:hover { color: var(--muted); }
+  .meta-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 6px; }
+  .meta-cell { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--surface); }
+  .meta-cell dt { color: var(--faint); font: 10px/1.3 var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+  .meta-cell dd { margin: 5px 0 0; font: 12px/1.5 var(--mono); word-break: break-all; }
+
+  @media (max-width: 900px) {
+    .doc-grid { grid-template-columns: 1fr; gap: 0; }
+    .toc { position: static; margin-bottom: 30px; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+    .toc ol { grid-auto-flow: column; grid-auto-columns: max-content; overflow-x: auto; }
+    .toc a { border-left: 0; border-bottom: 2px solid var(--line); white-space: nowrap; }
+    .toc a.active { border-left: 0; border-bottom-color: var(--accent); }
+    .toc a small { display: none; }
+    .meta-grid { grid-template-columns: 1fr; }
+    .rel-col { grid-template-columns: 1fr; gap: 20px; }
+  }
   @media (max-width: 860px) {
     .grid-2, .relation-grid, .facet-grid { grid-template-columns: 1fr; }
     .metrics { grid-template-columns: repeat(3, 1fr); }
@@ -294,6 +393,9 @@
   var TYPE_LABEL = { entity: "实体", event: "事件", statement: "洞察", topic: "主题", raw: "原文", unknown: "未知" };
   var STATUS_LABEL = { planned: "计划中", ongoing: "进行中", occurred: "已发生", cancelled: "已取消", superseded: "已取代" };
   var EVENT_BASIS_LABEL = { appointment: "会面／咨询", scheduled_commitment: "明确排期", incident: "具体事件", milestone: "里程碑", transaction: "交易", material_change: "重要变化" };
+  var EDGE_LABEL = { about: "相关", supports: "支持", contrasts: "对比", contradicts: "矛盾", involves: "涉及", instance_of: "属于", related_to: "关联", similar_to: "相似", works_with: "协作", contains: "包含", belongs_to: "来源", refines: "细化", supersedes: "取代" };
+  var SUBJECT_ROLE_LABEL = { user: "用户本人", directly_affects_user: "直接影响用户" };
+  var FACTUALITY_LABEL = { planned: "计划中", ongoing: "进行中", occurred: "已发生" };
   var DETAIL_LABELS = ["对象与关系：", "历史与现状：", "发生与背景：", "结果与关联：", "洞察与依据：", "演进与影响：", "组织视角：", "脉络与边界："];
   var filterType = "all";
   var nodeQuery = "";
@@ -480,131 +582,255 @@
     });
   }
 
+  function edgeLabel(type) { return EDGE_LABEL[type] || type; }
+  function foldSection(title, count, body) {
+    return '<details class="group"><summary><span class="chev">▸</span><h2>' + esc(title) + '</h2><span class="count">' + esc(count) + '</span></summary><div class="group-body">' + body + '</div></details>';
+  }
+  function rawFold(label, body) {
+    return '<details class="raw-fold"><summary>' + esc(label) + '</summary><div class="fold-body">' + body + '</div></details>';
+  }
+  function evidenceRows(list) {
+    return list.map(function (item) {
+      var src = item.source ? chip(item.source) : (rawById[item.source_id] ? chip({ id: item.source_id, title: rawById[item.source_id].title, type: "raw" }) : (item.source_id ? '<span class="chip">' + esc(item.source_id) + '</span>' : ""));
+      return '<div class="evi-item"><div class="evi-claim">' + esc(item.claim) + '</div><div class="chips">' + src + '</div></div>';
+    }).join("");
+  }
+
+  // 综述导读区的关键标签(去机器术语)
+  function readingPills(node) {
+    var pills = [];
+    if (node.type === "topic") {
+      var reading = node.attrs && node.attrs.topic_reading;
+      if (reading && reading.confidence != null) pills.push('<span class="pill accent"><b>置信度</b> ' + esc(reading.confidence) + '</span>');
+      var memberCount = (node.outgoing || []).filter(function (edge) { return edge.type === "contains"; }).length;
+      if (memberCount) pills.push('<span class="pill"><b>' + memberCount + '</b> 个成员</span>');
+      var contract = node.attrs && node.attrs.topic_contract;
+      if (contract && Array.isArray(contract.facets) && contract.facets.length) pills.push('<span class="pill"><b>' + contract.facets.length + '</b> 个侧面</span>');
+    }
+    if (node.type === "event") {
+      if (node.status) pills.push('<span class="pill accent"><b>状态</b> ' + esc(STATUS_LABEL[node.status] || node.status) + '</span>');
+      if (node.event_date) pills.push('<span class="pill">发生于 <b>' + esc(node.event_date) + '</b></span>');
+      if (node.semantics && node.semantics.event_basis) pills.push('<span class="pill">' + esc(EVENT_BASIS_LABEL[node.semantics.event_basis] || node.semantics.event_basis) + '</span>');
+    }
+    if (node.type === "entity" && node.entity_kind) pills.push('<span class="pill accent">' + esc(node.entity_kind) + '</span>');
+    if (node.sources.length > 1) pills.push('<span class="pill">跨 <b>' + node.sources.length + '</b> 条记录</span>');
+    if (node.updated) pills.push('<span class="pill">最近更新 <b>' + esc(node.updated.slice(0, 10)) + '</b></span>');
+    return pills.length ? '<div class="pills">' + pills.join("") + '</div>' : "";
+  }
+
   function renderNode(node) {
     var view = element('<article class="view"></article>');
     var kind = node.type === "entity" ? node.entity_kind : node.type === "event" ? node.event_kind : "";
     var topicContract = node.type === "topic" && node.attrs && node.attrs.topic_contract || null;
     var topicReading = node.type === "topic" && node.attrs && node.attrs.topic_reading || null;
+    var reading = node.attrs && node.attrs.reading || null;
     var backTarget = node.type === "topic" ? ["#/topics", "返回主题阅读"] : ["#/nodes", "返回知识图谱"];
-    view.innerHTML = '<a class="back" href="' + backTarget[0] + '">← ' + backTarget[1] + '</a><header class="detail-head"><div>' + typeTag(node.type, kind) + '<h1>' + esc(node.title) + '</h1><p class="detail-summary">' + esc(node.summary) + '</p></div><div class="detail-id">' + esc(node.id) + "<br>" + node.sources.length + " sources</div></header>";
-    var facts = [];
-    if (node.aliases.length) facts.push(["Aliases", node.aliases.join("、")]);
-    if (node.event_date) facts.push(["Event date", node.event_date]);
-    if (node.status) facts.push(["Status", STATUS_LABEL[node.status] || node.status]);
-    if (node.semantics && node.semantics.action) facts.push(["发生的事", node.semantics.action]);
-    if (node.semantics && node.semantics.event_basis) facts.push(["时间线类别", EVENT_BASIS_LABEL[node.semantics.event_basis] || node.semantics.event_basis]);
-    if (node.semantics && node.semantics.standalone_reason) facts.push(["独立回顾价值", node.semantics.standalone_reason]);
-    if (node.semantics && node.semantics.subject_role) facts.push(["与用户关系", node.semantics.subject_role]);
-    if (node.semantics && node.semantics.factuality) facts.push(["事实性", node.semantics.factuality + " · confidence " + node.semantics.confidence]);
-    if (node.semantics && node.semantics.started_at) facts.push(["开始时间", node.semantics.started_at]);
-    if (node.semantics && node.semantics.ended_at) facts.push(["结束时间", node.semantics.ended_at]);
-    if (node.semantics && node.semantics.time_precision) facts.push(["时间精度", node.semantics.time_precision]);
-    if (node.semantics && node.semantics.location_ref) facts.push(["地点", byId[node.semantics.location_ref] ? byId[node.semantics.location_ref].title : node.semantics.location_ref]);
-    if (node.semantics && node.semantics.object_refs && node.semantics.object_refs.length) facts.push(["相关对象", node.semantics.object_refs.map(function (id) { return byId[id] ? byId[id].title : id; }).join("、")]);
-    if (topicContract && topicContract.topic_kind) facts.push(["主题类型", topicContract.topic_kind]);
-    if (node.created) facts.push(["Created", node.created.slice(0, 16).replace("T", " ")]);
-    if (node.updated) facts.push(["Updated", node.updated.slice(0, 16).replace("T", " ")]);
-    if (facts.length) view.insertAdjacentHTML("beforeend", '<div class="fact-grid">' + facts.map(function (fact) { return '<div class="fact"><div class="fact-label">' + esc(fact[0]) + '</div><div class="fact-value">' + esc(fact[1]) + "</div></div>"; }).join("") + "</div>");
-    if (topicReading) view.insertAdjacentHTML("beforeend", renderTopicReading(topicReading));
-    if (node.type === "topic") {
-      view.insertAdjacentHTML("beforeend", '<section class="section">' + section("证据", node.evidence.length) + (node.evidence.length ? '<div class="history">' + node.evidence.map(function (item) { return '<div class="history-item"><div class="history-state">' + esc(item.claim) + '</div><div class="chips">' + chip(item.source) + '</div></div>'; }).join("") + "</div>" : '<p class="empty">暂无结构化证据。</p>') + "</section>");
-      if (topicContract) view.insertAdjacentHTML("beforeend", renderTopicContract(topicContract));
-      if (node.detail) view.insertAdjacentHTML("beforeend", '<section class="section">' + section("详细内容") + '<div class="prose">' + detailHtml(node.detail) + "</div></section>");
-      if (node.key_points.length) view.insertAdjacentHTML("beforeend", '<section class="section">' + section("关键点", node.key_points.length) + '<div class="prose"><ul>' + node.key_points.map(function (item) { return '<li>' + esc(item) + '</li>'; }).join("") + "</ul></div></section>");
-    } else {
-      if (node.detail) view.insertAdjacentHTML("beforeend", '<section class="section">' + section("详细内容") + '<div class="prose">' + detailHtml(node.detail) + "</div></section>");
-      if (node.key_points.length) view.insertAdjacentHTML("beforeend", '<section class="section">' + section("关键点", node.key_points.length) + '<div class="prose"><ul>' + node.key_points.map(function (item) { return '<li>' + esc(item) + '</li>'; }).join("") + "</ul></div></section>");
-      if (node.evidence.length) view.insertAdjacentHTML("beforeend", '<section class="section">' + section("证据", node.evidence.length) + '<div class="history">' + node.evidence.map(function (item) { return '<div class="history-item"><div class="history-state">' + esc(item.claim) + '</div><div class="chips">' + chip(item.source) + '</div></div>'; }).join("") + "</div></section>");
+    var tldr = (reading && reading.tldr) || (topicReading && topicReading.core_understanding) || node.summary || "";
+    var isTopicLead = node.type === "topic";
+
+    // 章节收集,用于浮动目录
+    var toc = [];
+    var body = "";
+
+    // ① 综述导读
+    body += '<section class="block" id="sec-lead"><div class="type-line">' + typeTag(node.type, kind) + '</div>' +
+      '<h1 class="doc-title">' + esc(node.title) + '</h1>' + readingPills(node) +
+      (tldr ? '<div class="tldr' + (isTopicLead ? " topic-question" : "") + '"><span class="lead-label">' + (isTopicLead ? "核心理解" : "一段话读懂") + '</span><p>' + esc(tldr) + '</p></div>' : "") +
+      '</section>';
+    toc.push({ id: "sec-lead", label: "综述导读" });
+
+    // ② 精读
+    var readBody = "";
+    if (reading && reading.narrative) {
+      readBody += '<div class="prose">' + reading.narrative.split(/\n\s*\n/).filter(function (p) { return p.trim(); }).map(function (p) { return '<p>' + esc(p.trim()).replace(/\n/g, "<br>") + '</p>'; }).join("") + '</div>';
+      if (Array.isArray(reading.highlights) && reading.highlights.length) {
+        readBody += '<div class="highlights"><div class="h-label">要点</div><ul>' + reading.highlights.map(function (h) { return '<li>' + esc(h) + '</li>'; }).join("") + '</ul></div>';
+      }
+      if (node.detail) readBody += rawFold("完整综合（原始 detail，未删改）", '<div class="prose">' + detailHtml(node.detail) + '</div>');
+      if (node.key_points.length) readBody += rawFold("完整要点（原始 key_points，未删改）", '<div class="prose"><ul>' + node.key_points.map(function (item) { return '<li>' + esc(item) + '</li>'; }).join("") + '</ul></div>');
+    } else if (node.detail) {
+      // 降级:无阅读态字段时,直接以 detail 作为精读正文
+      readBody += '<div class="prose">' + detailHtml(node.detail) + '</div>';
+      if (node.key_points.length) readBody += '<div class="highlights"><div class="h-label">要点</div><ul>' + node.key_points.map(function (item) { return '<li>' + esc(item) + '</li>'; }).join("") + '</ul></div>';
+    } else if (node.body_html) {
+      readBody += '<div class="prose">' + node.body_html + '</div>';
     }
+    if (readBody) {
+      body += '<section class="block" id="sec-read"><div class="section-title"><h2>精读</h2><span>' + (reading && reading.narrative ? "阅读态综述" : "综合内容") + '</span></div>' + readBody + '</section>';
+      toc.push({ id: "sec-read", label: "精读" });
+    }
+
+    // ③ 演进
+    var evoBody = "";
+    if (node.current_state && node.evolution.length === 0) evoBody += '<div class="state-box">' + esc(node.current_state) + '</div>';
+    if (node.evolution.length) evoBody += historyBody(node.evolution, "date", "state");
+    if (topicReading && Array.isArray(topicReading.evolution) && topicReading.evolution.length) evoBody += historyBody(topicReading.evolution, "date", "state");
+    if (evoBody) {
+      var evoTitle = node.type === "event" ? "状态演进" : node.type === "topic" ? "主题演变" : "认知演进";
+      body += '<section class="block" id="sec-evo"><div class="section-title"><h2>' + evoTitle + '</h2></div><div class="history">' + evoBody + '</div></section>';
+      toc.push({ id: "sec-evo", label: evoTitle });
+    }
+    if (node.date_history.length || node.status_history.length) {
+      var histBody = "";
+      if (node.date_history.length) histBody += '<div class="subhead">日期历史</div><div class="history">' + historyBody(node.date_history, "changed_on", "event_date") + '</div>';
+      if (node.status_history.length) histBody += '<div class="subhead">状态历史</div><div class="history">' + historyBody(node.status_history, "date", "status") + '</div>';
+      body += foldSection("状态与日期历史", (node.date_history.length + node.status_history.length) + " 条", histBody);
+      toc.push({ id: null, label: "状态与日期历史" });
+    }
+
+    // topic 成员按 facet 分组(替代原 24 段平铺)
+    if (node.type === "topic" && topicContract) {
+      body += renderTopicMembers(node, topicContract);
+      toc.push({ id: "sec-members", label: "成员" });
+    }
+
+    // ④ 溯源与证据
+    var srcBody = "";
+    var evidence = node.evidence || [];
     var eventEvidence = node.semantics && node.semantics.evidence || [];
-    if (eventEvidence.length) view.insertAdjacentHTML("beforeend", '<section class="section">' + section("事件事实证据", eventEvidence.length) + '<div class="history">' + eventEvidence.map(function (item) { var raw = rawById[item.source_id]; return '<div class="history-item"><div class="history-state">' + esc(item.claim) + '</div><div class="chips">' + (raw ? chip({ id: raw.id, title: raw.title, type: "raw" }) : '<span class="chip">' + esc(item.source_id) + '</span>') + '</div></div>'; }).join("") + "</div></section>");
-    if (node.uncertainties.length) view.insertAdjacentHTML("beforeend", '<section class="section">' + section("不确定信息", node.uncertainties.length) + '<div class="prose"><ul>' + node.uncertainties.map(function (item) { return '<li>' + esc(item) + '</li>'; }).join("") + "</ul></div></section>");
-    if (node.type === "entity") view.insertAdjacentHTML("beforeend", renderEntitySourceGroups(node.source_groups || {}));
-    if (node.current_state) view.insertAdjacentHTML("beforeend", '<section class="section">' + section("当前洞察") + '<div class="state-box">' + esc(node.current_state) + "</div></section>");
-    if (node.evolution.length) view.insertAdjacentHTML("beforeend", historySection("认知演进", node.evolution, "date", "state"));
-    if (node.date_history.length) view.insertAdjacentHTML("beforeend", historySection("日期历史", node.date_history, "changed_on", "event_date"));
-    if (node.status_history.length) view.insertAdjacentHTML("beforeend", historySection("状态历史", node.status_history, "date", "status"));
+    var srcCount = 0;
+    if (evidence.length) { srcBody += '<div class="subhead">证据</div>' + evidenceRows(evidence); srcCount += evidence.length; }
+    if (eventEvidence.length) { srcBody += '<div class="subhead">事件事实证据</div>' + evidenceRows(eventEvidence); srcCount += eventEvidence.length; }
+    if (topicReading && Array.isArray(topicReading.open_questions) && topicReading.open_questions.length) {
+      srcBody += '<div class="subhead">开放问题</div>' + topicReading.open_questions.map(function (item) {
+        return '<div class="evi-item"><div class="evi-claim">' + esc(item.question || "—") + '</div>' + (item.basis ? '<div class="member-reason">依据：' + esc(item.basis) + '</div>' : "") + '<div class="chips">' + refChips(item.source_ids, "raw") + '</div></div>';
+      }).join("");
+    }
+    if (topicReading && Array.isArray(topicReading.contradictions) && topicReading.contradictions.length) {
+      srcBody += '<div class="subhead">矛盾</div>' + topicReading.contradictions.map(function (item) {
+        return '<div class="evi-item"><div class="evi-claim">' + esc(item.description || "—") + '</div><div class="chips">' + refChips(item.member_refs) + refChips(item.source_ids, "raw") + '</div></div>';
+      }).join("");
+    }
+    if (node.uncertainties.length) srcBody += '<div class="subhead">仍不确定</div><ul class="uncertain">' + node.uncertainties.map(function (item) { return '<li>' + esc(item) + '</li>'; }).join("") + '</ul>';
+    if (node.type === "entity") srcBody += '<div class="subhead">来源路径</div>' + entitySourceGroupsBody(node.source_groups || {});
+    if (node.sources.length) srcBody += '<div class="subhead">原始来源</div><div class="chips">' + node.sources.map(chip).join("") + '</div>';
+    if (srcBody) {
+      var srcSummary = [srcCount ? srcCount + " 条证据" : "", node.sources.length ? node.sources.length + " 来源" : "", node.uncertainties.length ? node.uncertainties.length + " 待定" : ""].filter(Boolean).join(" · ");
+      body += foldSection("溯源与证据", srcSummary, srcBody);
+      toc.push({ id: null, label: "溯源与证据" });
+    }
+
+    // ⑤ 关系图谱
+    var relBody = "";
     if (node.outgoing.length || node.incoming.length) {
-      var relation = '<section class="section">' + section("显式关系", node.outgoing.length + node.incoming.length) + '<div class="relation-grid"><div><h3>出边 · ' + node.outgoing.length + '</h3><div class="relation-list">' + node.outgoing.map(edgeRow).join("") + '</div></div><div><h3>反向关联 · ' + node.incoming.length + '</h3><div class="relation-list">' + node.incoming.map(edgeRow).join("") + "</div></div></div></section>";
-      view.insertAdjacentHTML("beforeend", relation);
+      relBody += '<div class="rel-col"><div><h3>指向其他节点 · ' + node.outgoing.length + '</h3><div class="relation-list">' + node.outgoing.map(edgeRow).join("") + '</div></div>' +
+        '<div><h3>被其他节点指向 · ' + node.incoming.length + '</h3><div class="relation-list">' + node.incoming.map(edgeRow).join("") + '</div></div></div>';
     }
     if (node.timeline_appearances.length) {
-      view.insertAdjacentHTML("beforeend", '<section class="section">' + section("出现在时间线", node.timeline_appearances.length) + '<div class="history">' + node.timeline_appearances.map(function (item) { return '<div class="history-item"><div class="history-date">' + esc(item.date + (item.time ? " " + item.time : "")) + '</div><div class="history-state">' + esc(item.text) + "</div></div>"; }).join("") + "</div></section>");
+      relBody += '<div class="subhead">出现在时间线</div><div class="history">' + node.timeline_appearances.map(function (item) { return '<div class="history-item"><div class="history-date">' + esc(item.date + (item.time ? " " + item.time : "")) + '</div><div class="history-state">' + esc(item.text) + '</div></div>'; }).join("") + '</div>';
     }
-    if (node.related.length) view.insertAdjacentHTML("beforeend", '<section class="section">' + section("相关节点", node.related.length) + '<div class="chips">' + node.related.map(chip).join("") + "</div></section>");
-    if (node.sources.length) view.insertAdjacentHTML("beforeend", '<section class="section">' + section("原始来源", node.sources.length) + '<div class="chips">' + node.sources.map(chip).join("") + "</div></section>");
-    if (node.body_html && !node.detail) view.insertAdjacentHTML("beforeend", '<section class="section">' + section("节点正文") + '<div class="prose">' + node.body_html + "</div></section>");
+    if (node.related.length) relBody += '<div class="subhead">相关节点</div><div class="chips">' + node.related.map(chip).join("") + '</div>';
+    if (relBody) {
+      var relSummary = [(node.outgoing.length + node.incoming.length) ? (node.outgoing.length + node.incoming.length) + " 显式关系" : "", node.related.length ? node.related.length + " 相关" : ""].filter(Boolean).join(" · ");
+      body += foldSection("关系图谱", relSummary, relBody);
+      toc.push({ id: null, label: "关系图谱" });
+    }
+
+    // ⑥ 元信息 / 调试
+    var meta = [];
+    if (node.aliases.length) meta.push(["Aliases", node.aliases.join("、")]);
+    if (node.semantics && node.semantics.action) meta.push(["发生的事", node.semantics.action]);
+    if (node.semantics && node.semantics.standalone_reason) meta.push(["独立回顾价值", node.semantics.standalone_reason]);
+    if (node.semantics && node.semantics.subject_role) meta.push(["与用户关系", SUBJECT_ROLE_LABEL[node.semantics.subject_role] || node.semantics.subject_role]);
+    if (node.semantics && node.semantics.factuality) meta.push(["事实性", (FACTUALITY_LABEL[node.semantics.factuality] || node.semantics.factuality) + (node.semantics.confidence != null ? " · 置信度 " + node.semantics.confidence : "")]);
+    if (node.semantics && node.semantics.time_precision) meta.push(["时间精度", node.semantics.time_precision]);
+    if (node.semantics && node.semantics.started_at) meta.push(["开始时间", node.semantics.started_at]);
+    if (node.semantics && node.semantics.ended_at) meta.push(["结束时间", node.semantics.ended_at]);
+    if (node.semantics && node.semantics.location_ref) meta.push(["地点", byId[node.semantics.location_ref] ? byId[node.semantics.location_ref].title : node.semantics.location_ref]);
+    if (node.semantics && node.semantics.object_refs && node.semantics.object_refs.length) meta.push(["相关对象", node.semantics.object_refs.map(function (id) { return byId[id] ? byId[id].title : id; }).join("、")]);
+    if (topicContract && topicContract.topic_kind) meta.push(["主题类型", topicContract.topic_kind]);
+    meta.push(["Node ID", node.id]);
+    meta.push(["Type", node.type]);
+    if (node.created) meta.push(["Created", node.created.slice(0, 16).replace("T", " ")]);
+    if (node.updated) meta.push(["Updated", node.updated.slice(0, 16).replace("T", " ")]);
     var debugAttrs = Object.assign({}, node.attrs || {});
-    delete debugAttrs.topic_contract;
-    delete debugAttrs.topic_reading;
-    if (Object.keys(debugAttrs).length) view.insertAdjacentHTML("beforeend", '<details class="section"><summary>节点 attrs</summary><pre>' + esc(JSON.stringify(debugAttrs, null, 2)) + "</pre></details>");
+    delete debugAttrs.topic_contract; delete debugAttrs.topic_reading; delete debugAttrs.reading;
+    delete debugAttrs.status_history; delete debugAttrs.date_history;
+    var metaBody = '<div class="meta-grid">' + meta.map(function (m) { return '<div class="meta-cell"><dt>' + esc(m[0]) + '</dt><dd>' + esc(m[1]) + '</dd></div>'; }).join("") + '</div>';
+    if (Object.keys(debugAttrs).length) metaBody += '<pre>' + esc(JSON.stringify(debugAttrs, null, 2)) + '</pre>';
+    body += '<details class="meta"><summary>元信息 / 调试字段</summary>' + metaBody + '</details>';
+
+    // 组装:浮动目录 + 阅读列
+    var tocHtml = '<aside class="toc"><div class="toc-eyebrow">本页目录</div><ol>' + toc.filter(function (t) { return t.id; }).map(function (t) {
+      return '<li><a href="#' + t.id + '" data-spy>' + esc(t.label) + '</a></li>';
+    }).join("") + '</ol></aside>';
+    view.innerHTML = '<a class="back" href="' + backTarget[0] + '">← ' + backTarget[1] + '</a>' +
+      '<div class="doc-grid">' + tocHtml + '<div class="reading">' + body + '</div></div>';
     replace(view);
+    setupSpy(view);
+  }
+
+  function historyBody(values, dateKey, valueKey) {
+    return values.map(function (item) {
+      var display = valueKey === "status" ? (STATUS_LABEL[item[valueKey]] || item[valueKey]) : item[valueKey];
+      var refs = (item.sources || item.source_ids || []).map(function (id) { return rawById[id] ? chip({ id: id, title: rawById[id].title, type: "raw" }) : '<span class="chip">' + esc(id) + "</span>"; }).join("");
+      return '<div class="history-item"><div class="history-date">' + esc(item[dateKey] || "未标日期") + '</div><div class="history-state">' + esc(display || "—") + '</div>' + (item.note ? '<div class="member-reason">' + esc(item.note) + "</div>" : "") + '<div class="chips">' + refs + "</div></div>";
+    }).join("");
   }
 
   function refChips(ids, fallbackType) {
     return (Array.isArray(ids) ? ids : []).map(function (id) { return chip(refById(id, fallbackType)); }).join("");
   }
 
-  function renderTopicReading(reading) {
-    var evolution = Array.isArray(reading.evolution) ? reading.evolution : [];
-    var contradictions = Array.isArray(reading.contradictions) ? reading.contradictions : [];
-    var openQuestions = Array.isArray(reading.open_questions) ? reading.open_questions : [];
-    var html = '<section class="section">' + section("核心理解") + '<div class="state-box topic-question">' + esc(reading.core_understanding || "—") + '</div><div class="chips"><span class="chip">置信度 · ' + esc(reading.confidence == null ? "—" : reading.confidence) + "</span></div></section>";
-    html += '<section class="section">' + section("演变", evolution.length) + (evolution.length ? '<div class="history">' + evolution.map(function (item) {
-      return '<div class="history-item"><div class="history-date">' + esc(item.date || "未标日期") + '</div><div class="history-state">' + esc(item.state || "—") + '</div><div class="chips">' + refChips(item.source_ids, "raw") + "</div></div>";
-    }).join("") + "</div>" : '<p class="empty">暂无演变记录。</p>') + "</section>";
-    html += '<section class="section">' + section("矛盾", contradictions.length) + (contradictions.length ? '<div class="relation-list">' + contradictions.map(function (item) {
-      return '<div class="relation-row"><div class="relation-note">' + esc(item.description || "—") + '</div><div class="chips">' + refChips(item.member_refs) + refChips(item.source_ids, "raw") + "</div></div>";
-    }).join("") + "</div>" : '<p class="empty">暂无已识别矛盾。</p>') + "</section>";
-    html += '<section class="section">' + section("开放问题", openQuestions.length) + (openQuestions.length ? '<div class="relation-list">' + openQuestions.map(function (item) {
-      return '<div class="relation-row"><div class="history-state">' + esc(item.question || "—") + '</div><div class="relation-note">' + esc(item.basis || "") + '</div><div class="chips">' + refChips(item.source_ids, "raw") + "</div></div>";
-    }).join("") + "</div>" : '<p class="empty">暂无开放问题。</p>') + "</section>";
-    return html;
-  }
-
-  function renderEntitySourceGroups(groups) {
+  function entitySourceGroupsBody(groups) {
     var values = [
       { key: "direct", label: "直接来源", note: "Raw 通过 belongs_to 直接指向实体" },
-      { key: "via_events", label: "经事件", note: "事件通过显式关系或 semantics 指向实体" },
+      { key: "via_events", label: "经事件", note: "事件通过显式关系或语义指向实体" },
       { key: "via_insights", label: "经洞察", note: "洞察通过显式关系指向实体" }
     ];
-    return '<section class="section">' + section("实体来源路径") + '<div class="facet-grid">' + values.map(function (item) {
+    return values.map(function (item) {
       var refs = groups[item.key] || [];
-      return '<article class="facet-card"><h3>' + item.label + '</h3><p>' + item.note + '</p><div class="chips">' + (refs.length ? refs.map(chip).join("") : '<span class="chip">暂无</span>') + "</div></article>";
-    }).join("") + "</div></section>";
+      return '<div class="member"><strong>' + esc(item.label) + '</strong><div class="member-reason">' + esc(item.note) + '</div><div class="chips" style="margin-top:6px">' + (refs.length ? refs.map(chip).join("") : '<span class="chip">暂无</span>') + '</div></div>';
+    }).join("");
   }
 
-  function renderTopicContract(contract) {
+  // topic 成员:按 facet 分组折叠(替代 24 段平铺)
+  function renderTopicMembers(node, contract) {
     var rationales = contract.member_rationales || {};
-    var facets = contract.facets || [];
-    var exclusions = contract.exclusions || [];
-    var html = '<section class="section">' + section("成员合同") + '<p class="lede">以下结构说明主题如何组织成员，以及哪些相近证据仍在边界之外。</p></section>';
-    html += '<section class="section">' + section("主题组织问题") + '<div class="state-box topic-question">' + esc(contract.organizing_question || "—") + '</div><div class="fact-grid"><div class="fact"><div class="fact-label">侧面关系</div><div class="fact-value">' + esc(contract.facet_relationship || "—") + '</div></div><div class="fact"><div class="fact-label">成员边界</div><div class="fact-value">' + esc(contract.boundary_rule || "—") + "</div></div></div></section>";
-    html += '<section class="section">' + section("主题侧面", facets.length) + '<div class="facet-grid">' + facets.map(function (facet) {
+    var facets = Array.isArray(contract.facets) ? contract.facets : [];
+    var containedIds = (node.outgoing || []).filter(function (e) { return e.type === "contains"; }).map(function (e) { return e.other.id; });
+    var facetHtml = facets.map(function (facet, index) {
       var members = Array.isArray(facet.member_refs) ? facet.member_refs : (facet.statement_refs || []);
-      return '<article class="facet-card"><h3>' + esc(facet.name || "未命名侧面") + '</h3><p>' + esc(facet.summary || "") + "</p>" + members.map(function (id) {
+      var memberHtml = members.map(function (id) {
         var rationale = rationales[id] || {};
         var target = refById(id, "statement");
-        return '<div class="facet-member">' + chip(target) + '<div class="facet-reason">' + esc(rationale.reason || "") + '</div><div class="facet-excerpt">依据：' + esc(rationale.supporting_excerpt || "—") + "</div></div>";
-      }).join("") + "</article>";
-    }).join("") + "</div></section>";
-    if (exclusions.length) html += '<section class="section">' + section("排除边界", exclusions.length) + '<div class="relation-list">' + exclusions.map(function (item) {
-      var id = item.member_ref || item.member_id || item.statement_id || "";
-      var target = refById(id, "statement");
-      return '<div class="relation-row">' + chip(target) + '<div class="facet-excerpt">最相关依据：' + esc(item.nearby_excerpt || "—") + '</div><div class="relation-note">' + esc(item.reason || "") + "</div></div>";
-    }).join("") + "</div></section>";
-    return html;
+        return '<div class="member">' + chip(target) + (rationale.reason ? '<div class="member-reason">' + esc(rationale.reason) + '</div>' : "") + (rationale.supporting_excerpt ? '<div class="member-excerpt">依据：' + esc(rationale.supporting_excerpt) + '</div>' : "") + '</div>';
+      }).join("");
+      return '<details class="facet"' + (index === 0 ? " open" : "") + '><summary><span class="chev">▸</span><div><div class="facet-name">' + esc(facet.name || "未命名侧面") + '</div>' + (facet.summary ? '<div class="facet-sum">' + esc(facet.summary) + '</div>' : "") + '</div><span class="facet-count">' + members.length + ' 成员</span></summary><div class="facet-body">' + memberHtml + '</div></details>';
+    }).join("");
+    var intro = "";
+    if (contract.organizing_question) intro += '<div class="tldr topic-question"><span class="lead-label">主题组织问题</span><p>' + esc(contract.organizing_question) + '</p></div>';
+    if (contract.boundary_rule) intro += '<div class="member-reason" style="margin:12px 0">成员边界：' + esc(contract.boundary_rule) + '</div>';
+    var exclusions = "";
+    if (Array.isArray(contract.exclusions) && contract.exclusions.length) {
+      exclusions = '<div class="subhead">排除边界（相近但不纳入）</div>' + contract.exclusions.map(function (item) {
+        var id = item.member_ref || item.member_id || item.statement_id || "";
+        return '<div class="member">' + chip(refById(id, "statement")) + (item.reason ? '<div class="member-reason">' + esc(item.reason) + '</div>' : "") + (item.nearby_excerpt ? '<div class="member-excerpt">最相关依据：' + esc(item.nearby_excerpt) + '</div>' : "") + '</div>';
+      }).join("");
+    }
+    return '<section class="block" id="sec-members"><div class="section-title"><h2>成员</h2><span>' + containedIds.length + ' 个成员 · ' + facets.length + ' 个侧面</span></div>' + intro + facetHtml + exclusions + '</section>';
   }
 
-  function historySection(title, values, dateKey, valueKey) {
-    return '<section class="section">' + section(title, values.length) + '<div class="history">' + values.map(function (item) {
-      var display = valueKey === "status" ? (STATUS_LABEL[item[valueKey]] || item[valueKey]) : item[valueKey];
-      var refs = (item.sources || item.source_ids || []).map(function (id) { return rawById[id] ? chip({ id: id, title: rawById[id].title, type: "raw" }) : '<span class="chip">' + esc(id) + "</span>"; }).join("");
-      return '<div class="history-item"><div class="history-date">' + esc(item[dateKey] || "未标日期") + '</div><div class="history-state">' + esc(display || "—") + '</div>' + (item.note ? '<div class="relation-note">' + esc(item.note) + "</div>" : "") + '<div class="chips">' + refs + "</div></div>";
-    }).join("") + "</div></section>";
-  }
   function edgeRow(edge) {
-    return '<div class="relation-row"><div class="relation-kind">' + esc(edge.type) + (edge.inferred ? " · inferred" : "") + '</div><div>' + chip(edge.other) + '</div>' + (edge.note ? '<div class="relation-note">' + esc(edge.note) + "</div>" : "") + "</div>";
+    return '<div class="relation-row"><span class="rel-kind">' + esc(edgeLabel(edge.type)) + (edge.inferred ? " · 推断" : "") + '</span><div>' + chip(edge.other) + '</div>' + (edge.note ? '<div class="rel-note">' + esc(edge.note) + "</div>" : "") + "</div>";
+  }
+
+  // 浮动目录滚动高亮
+  function setupSpy(view) {
+    var links = view.querySelectorAll(".toc a[data-spy]");
+    if (!links.length || !("IntersectionObserver" in window)) return;
+    var map = {};
+    links.forEach(function (a) { map[a.getAttribute("href").slice(1)] = a; });
+    var sections = Array.prototype.map.call(links, function (a) { return view.querySelector("#" + a.getAttribute("href").slice(1)); }).filter(Boolean);
+    var obs = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (e.isIntersecting) {
+          links.forEach(function (l) { l.classList.remove("active"); });
+          if (map[e.target.id]) map[e.target.id].classList.add("active");
+        }
+      });
+    }, { rootMargin: "-90px 0px -65% 0px", threshold: 0 });
+    sections.forEach(function (s) { obs.observe(s); });
   }
 
   function renderRaws() {
