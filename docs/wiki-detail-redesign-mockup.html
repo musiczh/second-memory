@@ -1,0 +1,629 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>详情页优化设计稿 · 第二记忆 Wiki</title>
+<style>
+  :root {
+    --bg: #f4f1ea;
+    --surface: rgba(255, 255, 255, .72);
+    --surface-solid: #fbfaf7;
+    --ink: #1d2523;
+    --muted: #68716d;
+    --faint: #949b97;
+    --line: rgba(29, 37, 35, .12);
+    --accent: #1f6d5a;
+    --accent-soft: #dcebe5;
+    --warn: #9c5c23;
+    --warn-soft: #f3e5d4;
+    --danger: #9a4545;
+    --entity: #397d73;
+    --event: #a36731;
+    --statement: #5e6090;
+    --topic: #925b74;
+    --raw: #737b78;
+    --shadow: 0 18px 60px rgba(39, 45, 41, .08);
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    --serif: "Songti SC", "STSong", "Noto Serif CJK SC", Georgia, serif;
+    --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141816;
+      --surface: rgba(28, 34, 31, .82);
+      --surface-solid: #1c221f;
+      --ink: #e5e9e6;
+      --muted: #abb3af;
+      --faint: #78827d;
+      --line: rgba(229, 233, 230, .11);
+      --accent: #76bfa9;
+      --accent-soft: #203b33;
+      --warn: #e0a365;
+      --warn-soft: #42301f;
+      --danger: #df8888;
+      --shadow: 0 18px 60px rgba(0, 0, 0, .22);
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    color: var(--ink);
+    background:
+      radial-gradient(circle at 14% -10%, color-mix(in srgb, var(--accent) 11%, transparent), transparent 34rem),
+      var(--bg);
+    font: 16px/1.65 var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; text-decoration: none; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  .shell { width: min(1180px, calc(100% - 32px)); margin: 0 auto; }
+
+  /* ---- top bar ---- */
+  .topbar {
+    position: sticky; top: 0; z-index: 40;
+    border-bottom: 1px solid var(--line);
+    background: color-mix(in srgb, var(--bg) 86%, transparent);
+    backdrop-filter: blur(18px) saturate(1.15);
+  }
+  .topbar .shell { min-height: 70px; display: flex; align-items: center; gap: 22px; }
+  .brand { display: flex; align-items: center; gap: 11px; white-space: nowrap; }
+  .brand-mark {
+    width: 34px; height: 34px; display: grid; place-items: center;
+    border: 1px solid var(--line); border-radius: 50%;
+    color: var(--accent); background: var(--surface);
+    font: 600 17px/1 var(--serif);
+  }
+  .brand-title { font: 600 17px/1.1 var(--serif); letter-spacing: .06em; }
+  .brand-sub { color: var(--faint); font: 9px/1.2 var(--mono); letter-spacing: .18em; text-transform: uppercase; margin-top: 4px; }
+  nav { display: flex; align-self: stretch; margin-left: auto; }
+  nav a { display: grid; place-items: center; padding: 0 13px; color: var(--muted); font-size: 14px; }
+  nav a:hover, nav a[aria-current="page"] { color: var(--ink); }
+
+  /* ---- demo controls ---- */
+  .demo-banner {
+    border-bottom: 1px solid var(--line);
+    background: var(--warn-soft);
+  }
+  .demo-banner .shell { padding: 10px 0; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  .demo-banner .tag { font: 600 10px/1.3 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--warn); border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent); border-radius: 999px; padding: 4px 9px; white-space: nowrap; }
+  .demo-banner p { margin: 0; color: var(--warn); font-size: 13px; flex: 1; min-width: 280px; }
+  .switch { display: inline-flex; gap: 0; border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent); border-radius: 999px; overflow: hidden; }
+  .switch button { padding: 6px 14px; background: transparent; color: var(--warn); font-size: 13px; border: 0; }
+  .switch button.active { background: var(--warn); color: var(--surface-solid); }
+
+  /* ---- layout: floating TOC + reading column ---- */
+  main { padding: 40px 0 90px; }
+  .doc-grid { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 48px; align-items: start; }
+  .toc { position: sticky; top: 92px; align-self: start; }
+  .toc-eyebrow { color: var(--faint); font: 10px/1.3 var(--mono); letter-spacing: .16em; text-transform: uppercase; margin-bottom: 14px; }
+  .toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+  .toc a {
+    display: block; padding: 7px 12px; border-left: 2px solid var(--line);
+    color: var(--muted); font-size: 13.5px; transition: color .15s, border-color .15s, background .15s;
+  }
+  .toc a:hover { color: var(--ink); }
+  .toc a.active { color: var(--accent); border-left-color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, transparent); font-weight: 600; }
+  .toc a small { display: block; color: var(--faint); font: 10px/1.3 var(--mono); margin-top: 2px; }
+
+  .reading { max-width: 760px; }
+  .back { display: inline-flex; margin-bottom: 22px; color: var(--muted); font: 12px/1.3 var(--mono); }
+  .back:hover { color: var(--accent); }
+
+  /* ---- ① 综述导读 ---- */
+  .type-line { display: inline-flex; align-items: center; gap: 9px; color: var(--muted); font: 11px/1.4 var(--mono); text-transform: uppercase; margin-bottom: 12px; }
+  .type-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--faint); }
+  .type-dot.entity { background: var(--entity); }
+  .type-dot.event { background: var(--event); }
+  .type-dot.statement { background: var(--statement); }
+  .type-dot.topic { background: var(--topic); }
+  .type-dot.raw { background: var(--raw); }
+  .doc-title { margin: 0 0 20px; font: 600 clamp(30px, 4.6vw, 46px)/1.16 var(--serif); letter-spacing: -.01em; }
+  .tldr {
+    position: relative; margin: 0 0 20px; padding: 22px 26px;
+    border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 14px;
+    background: var(--surface); box-shadow: var(--shadow);
+  }
+  .tldr .lead-label { display: block; margin-bottom: 8px; color: var(--accent); font: 10px/1.3 var(--mono); letter-spacing: .14em; text-transform: uppercase; }
+  .tldr p { margin: 0; font: 20px/1.7 var(--serif); }
+  .pills { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; padding: 5px 12px; background: var(--surface); color: var(--muted); font-size: 13px; }
+  .pill b { color: var(--ink); font-weight: 600; }
+  .pill.accent { border-color: color-mix(in srgb, var(--accent) 40%, transparent); color: var(--accent); }
+
+  /* ---- section frame ---- */
+  section.block { scroll-margin-top: 96px; margin-top: 46px; }
+  .block-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 16px; padding-bottom: 9px; border-bottom: 1px solid var(--line); }
+  .block-head h2 { margin: 0; font: 600 20px/1.3 var(--serif); }
+  .block-head .count { color: var(--faint); font: 11px/1.2 var(--mono); }
+
+  /* ---- ② 精读 ---- */
+  .prose { font: 17.5px/1.95 var(--serif); }
+  .prose p { margin: 0 0 20px; }
+  .prose .drop::first-letter { }
+  .highlights { margin: 26px 0 4px; padding: 18px 20px 18px 22px; border-radius: 12px; background: color-mix(in srgb, var(--accent) 6%, transparent); border: 1px solid var(--accent-soft); }
+  .highlights .h-label { color: var(--accent); font: 10px/1.3 var(--mono); letter-spacing: .12em; text-transform: uppercase; margin-bottom: 10px; }
+  .highlights ul { margin: 0; padding-left: 20px; }
+  .highlights li { margin-bottom: 8px; font: 15.5px/1.7 var(--sans); }
+  .highlights li:last-child { margin-bottom: 0; }
+
+  /* collapsible original content */
+  details.raw-fold { margin-top: 20px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); overflow: hidden; }
+  details.raw-fold > summary { list-style: none; cursor: pointer; padding: 12px 16px; color: var(--muted); font: 12px/1.4 var(--mono); display: flex; align-items: center; gap: 8px; }
+  details.raw-fold > summary::-webkit-details-marker { display: none; }
+  details.raw-fold > summary::before { content: "▸"; color: var(--faint); transition: transform .15s; }
+  details.raw-fold[open] > summary::before { transform: rotate(90deg); }
+  details.raw-fold > summary:hover { color: var(--accent); }
+  details.raw-fold .fold-body { padding: 4px 18px 16px; border-top: 1px solid var(--line); }
+  .detail-label { margin: 18px 0 8px; color: var(--accent); font: 11px/1.4 var(--mono); letter-spacing: .06em; }
+  .detail-label:first-child { margin-top: 12px; }
+  .fold-body .prose { font-size: 16px; line-height: 1.85; }
+  .fold-body ul { padding-left: 20px; }
+  .fold-body li { margin-bottom: 7px; }
+
+  /* ---- ③ 演进 timeline ---- */
+  .history { position: relative; display: grid; gap: 0; padding-left: 24px; margin-top: 4px; }
+  .history::before { content: ""; position: absolute; left: 5px; top: 8px; bottom: 12px; width: 1px; background: var(--line); }
+  .history-item { position: relative; padding: 0 0 24px 12px; }
+  .history-item:last-child { padding-bottom: 4px; }
+  .history-item::before { content: ""; position: absolute; left: -22px; top: 7px; width: 8px; height: 8px; border-radius: 50%; background: var(--statement); box-shadow: 0 0 0 4px color-mix(in srgb, var(--statement) 16%, transparent); }
+  .history-item.topic::before { background: var(--topic); box-shadow: 0 0 0 4px color-mix(in srgb, var(--topic) 16%, transparent); }
+  .history-date { color: var(--faint); font: 11px/1.4 var(--mono); }
+  .history-state { margin-top: 4px; font: 16px/1.66 var(--serif); }
+  .history-src { margin-top: 6px; }
+
+  /* ---- collapsible group blocks (④⑤) ---- */
+  details.group { margin-top: 22px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); box-shadow: var(--shadow); overflow: hidden; }
+  details.group > summary { list-style: none; cursor: pointer; padding: 17px 20px; display: flex; align-items: center; gap: 12px; }
+  details.group > summary::-webkit-details-marker { display: none; }
+  details.group > summary .chev { color: var(--faint); transition: transform .18s; }
+  details.group[open] > summary .chev { transform: rotate(90deg); }
+  details.group > summary h2 { margin: 0; font: 600 18px/1.3 var(--serif); flex: 1; }
+  details.group > summary .count { color: var(--faint); font: 11px/1.3 var(--mono); }
+  details.group > summary:hover h2 { color: var(--accent); }
+  .group-body { padding: 4px 20px 22px; border-top: 1px solid var(--line); }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; border: 1px solid var(--line); border-radius: 999px; padding: 5px 11px; color: var(--muted); background: var(--surface-solid); font-size: 13px; }
+  a.chip:hover { color: var(--accent); border-color: var(--accent); }
+
+  .evi-item { padding: 14px 0; border-bottom: 1px solid var(--line); }
+  .evi-item:last-child { border-bottom: 0; }
+  .evi-claim { font: 15.5px/1.7 var(--serif); margin-bottom: 8px; }
+  .subhead { margin: 20px 0 10px; color: var(--faint); font: 10px/1.3 var(--mono); letter-spacing: .12em; text-transform: uppercase; }
+  .subhead:first-child { margin-top: 6px; }
+  .uncertain { padding-left: 20px; margin: 0; }
+  .uncertain li { margin-bottom: 8px; font: 15px/1.7 var(--sans); color: var(--muted); }
+
+  /* relations */
+  .rel-col { display: grid; grid-template-columns: 1fr 1fr; gap: 26px; }
+  .rel-col h3 { margin: 0 0 8px; font: 600 13px/1.4 var(--sans); color: var(--muted); }
+  .rel-row { padding: 11px 0; border-bottom: 1px solid var(--line); }
+  .rel-row:last-child { border-bottom: 0; }
+  .rel-kind { display: inline-block; margin-bottom: 5px; padding: 2px 8px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); font: 11px/1.5 var(--mono); }
+  .rel-note { margin-top: 5px; color: var(--muted); font-size: 12.5px; }
+
+  /* facets (topic) */
+  .facet { margin-bottom: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-solid); overflow: hidden; }
+  .facet:last-child { margin-bottom: 0; }
+  .facet > summary { list-style: none; cursor: pointer; padding: 15px 17px; display: flex; gap: 12px; align-items: flex-start; }
+  .facet > summary::-webkit-details-marker { display: none; }
+  .facet > summary .chev { color: var(--faint); margin-top: 4px; transition: transform .18s; }
+  .facet[open] > summary .chev { transform: rotate(90deg); }
+  .facet .facet-name { font: 600 16px/1.4 var(--serif); }
+  .facet .facet-sum { margin-top: 4px; color: var(--muted); font-size: 13.5px; }
+  .facet .facet-count { margin-left: auto; color: var(--faint); font: 11px/1.3 var(--mono); white-space: nowrap; }
+  .facet-body { padding: 2px 17px 16px 44px; }
+  .member { padding: 11px 0; border-top: 1px solid var(--line); }
+  .member-reason { margin-top: 5px; color: var(--muted); font-size: 13px; line-height: 1.65; }
+  .member-excerpt { margin-top: 6px; padding-left: 12px; border-left: 2px solid var(--line); color: var(--faint); font: 12.5px/1.6 var(--serif); }
+
+  /* ---- ⑥ meta / footer ---- */
+  details.meta { margin-top: 40px; border-top: 1px solid var(--line); padding-top: 8px; }
+  details.meta > summary { list-style: none; cursor: pointer; padding: 12px 0; color: var(--faint); font: 11px/1.3 var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+  details.meta > summary::-webkit-details-marker { display: none; }
+  details.meta > summary:hover { color: var(--muted); }
+  .meta-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 6px; }
+  .meta-cell { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--surface); }
+  .meta-cell dt { color: var(--faint); font: 10px/1.3 var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+  .meta-cell dd { margin: 5px 0 0; font: 12px/1.5 var(--mono); word-break: break-all; }
+
+  .note { margin: 14px 0 0; padding: 12px 16px; border-radius: 10px; border: 1px dashed color-mix(in srgb, var(--warn) 42%, transparent); background: var(--warn-soft); color: var(--warn); font-size: 13px; }
+  .note b { font-weight: 600; }
+
+  .view { display: none; }
+  .view.active { display: block; }
+
+  @media (max-width: 900px) {
+    .doc-grid { grid-template-columns: 1fr; gap: 0; }
+    .toc { position: static; margin-bottom: 30px; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+    .toc ol { grid-auto-flow: column; grid-auto-columns: max-content; overflow-x: auto; }
+    .toc a { border-left: 0; border-bottom: 2px solid var(--line); white-space: nowrap; }
+    .toc a.active { border-left: 0; border-bottom-color: var(--accent); }
+    .toc a small { display: none; }
+    .rel-col { grid-template-columns: 1fr; gap: 20px; }
+    .meta-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="shell">
+    <a class="brand" href="#">
+      <span class="brand-mark">忆</span>
+      <span><span class="brand-title">第二记忆</span><span class="brand-sub">Detail Redesign · Mockup</span></span>
+    </a>
+    <nav>
+      <a href="#">主题</a><a href="#">概览</a><a href="#">时间线</a><a href="#" aria-current="page">图谱</a><a href="#">原文</a>
+    </nav>
+  </div>
+</header>
+
+<div class="demo-banner">
+  <div class="shell">
+    <span class="tag">设计稿 Mockup</span>
+    <p>这是详情页优化后的<b>视觉与布局设计稿</b>，用你知识库的真实节点填充。其中「综述 / 精读 / 要点」是按 PRD 重组规则<b>手工示范</b>的阅读态效果，非已生成数据；原始 <code>detail / key_points</code> 完整保留在折叠区。</p>
+    <div class="switch">
+      <button data-view="statement" class="active">洞察示例</button>
+      <button data-view="topic">主题示例</button>
+    </div>
+  </div>
+</div>
+
+<main class="shell">
+
+<!-- ============ 洞察示例 ============ -->
+<div class="view active" id="view-statement">
+  <div class="doc-grid">
+    <aside class="toc">
+      <div class="toc-eyebrow">本页目录</div>
+      <ol>
+        <li><a href="#s-tldr" data-spy class="active">综述导读</a></li>
+        <li><a href="#s-read" data-spy>精读<small>是什么 · 为什么 · 演变</small></a></li>
+        <li><a href="#s-evo" data-spy>认知演进<small>2 个阶段</small></a></li>
+        <li><a href="#s-src" data-spy>溯源与证据<small>2 证据 · 2 来源</small></a></li>
+        <li><a href="#s-rel" data-spy>关系图谱<small>2 出 · 4 反向</small></a></li>
+      </ol>
+    </aside>
+
+    <article class="reading">
+      <a class="back" href="#">← 返回知识图谱</a>
+
+      <!-- ① 综述导读 -->
+      <section class="block" id="s-tldr" style="scroll-margin-top:96px;margin-top:0">
+        <div class="type-line"><span class="type-dot statement"></span>洞察 · Statement</div>
+        <h1 class="doc-title">失败羞耻会推动规划代替行动</h1>
+        <div class="pills">
+          <span class="pill accent"><b>置信度</b> 高</span>
+          <span class="pill">跨 <b>2</b> 条记录</span>
+          <span class="pill">最近更新 <b>2026-08-07</b></span>
+        </div>
+        <div class="tldr">
+          <span class="lead-label">一段话读懂</span>
+          <p>害怕失败戳破「能力很强」的形象、失去尊重，于是用规划和不做来自我保护；代价是持续减少现实反馈与落地经验，让「想得多、做得少」的差距一直存在。</p>
+        </div>
+      </section>
+
+      <!-- ② 精读 -->
+      <section class="block" id="s-read">
+        <div class="block-head"><h2>精读</h2><span class="count">重组去重 · 阅读排版</span></div>
+        <div class="prose">
+          <p>这条洞察最早出现时，用户识别到的是一个循环：真正动手会暴露能力、方法与现实之间的差距，为了避免这种「差距」被读成对自己的否定，于是停留在规划、优化和「等更有把握」的状态里。</p>
+          <p>2026-08-07 的灰度事故把这层保护的<em>真正对象</em>点破了——被保护的不是任务，而是「能力很强」这个形象。一旦真实交付失败，用户担心形象被戳破、失去尊重，甚至被认为「连应届生都不如」。</p>
+          <p>于是「不做」有了功能：它能暂时避免失败和难堪。但它同时也在削减真实落地、问题暴露和经验训练，让纸上规划与执行能力之间的差距继续拉大。用户提出的方向不是强迫自己不怕失败，而是<strong>在害怕被评价时，仍然完成一个可验证的小闭环</strong>——但也坦承，这件事说起来容易、做起来很难。</p>
+        </div>
+
+        <div class="highlights">
+          <div class="h-label">要点</div>
+          <ul>
+            <li>「不做」承担着保护强者形象的功能——不失败，就不会被戳破。</li>
+            <li>回避的代价是减少现实检验，进而减少落地经验与执行训练。</li>
+            <li>转变方向：害怕评价时仍交付一个可验证的小结果，而非证明自己很强。</li>
+          </ul>
+        </div>
+
+        <details class="raw-fold">
+          <summary>完整综合（原 detail 原文，未删改）</summary>
+          <div class="fold-body">
+            <div class="detail-label">洞察与依据</div>
+            <div class="prose"><p>此前用户已识别到真正行动会暴露能力、方法与现实的差距，为避免人格否定，容易停留在规划、优化和等待更有把握的状态。本次灰度事故进一步指出保护对象是"能力很强"的形象：如果真实交付失败，用户担心形象被戳破、失去尊重，甚至被认为不如应届生。</p></div>
+            <div class="detail-label">演进与影响</div>
+            <div class="prose"><p>不做可以暂时避免失败，却也减少真实落地、问题暴露和经验训练，使纸上规划与执行差距继续存在。用户提出在害怕评价时仍完成一个可验证的小闭环，但明确感到实践困难；后续需要观察是否真的用小结果替代了不行动。</p></div>
+          </div>
+        </details>
+
+        <details class="raw-fold">
+          <summary>完整要点（原 key_points，未删改）</summary>
+          <div class="fold-body">
+            <div class="prose"><ul>
+              <li>失败羞耻会让不行动承担保护强者形象的功能</li>
+              <li>真正行动会暴露能力、方法与现实的差距，为避免人格否定，容易停留在规划、优化和等待更有把握的状态。</li>
+              <li>减少现实检验也会减少落地经验和执行训练</li>
+            </ul></div>
+            <p class="note"><b>对比：</b>原 key_points 第 2 条与 detail「洞察与依据」段落逐字重复——这正是重组后被去重、只在精读正文保留一次的内容。</p>
+          </div>
+        </details>
+      </section>
+
+      <!-- ③ 认知演进 -->
+      <section class="block" id="s-evo">
+        <div class="block-head"><h2>认知演进</h2><span class="count">2 个阶段</span></div>
+        <div class="history">
+          <div class="history-item">
+            <div class="history-date">2026-07-27</div>
+            <div class="history-state">真正行动会暴露能力、方法与现实的差距，为避免人格否定，容易停留在规划、优化和等待更有把握的状态。</div>
+            <div class="history-src chips"><a class="chip" href="#"><span class="type-dot raw"></span>从超预期幻想到纸上谈兵</a></div>
+          </div>
+          <div class="history-item">
+            <div class="history-date">2026-08-07</div>
+            <div class="history-state">把规划回避进一步追溯到维护强者形象：不做能暂时避免失败和失去尊重，却持续减少现实反馈与落地经验。</div>
+            <div class="history-src chips"><a class="chip" href="#"><span class="type-dot raw"></span>害怕强者形象被戳破导致行动回避</a></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ④ 溯源与证据（折叠） -->
+      <details class="group" id="s-src">
+        <summary><span class="chev">▸</span><h2>溯源与证据</h2><span class="count">2 条证据 · 1 项待定 · 2 来源</span></summary>
+        <div class="group-body">
+          <div class="subhead">证据</div>
+          <div class="evi-item">
+            <div class="evi-claim">用户完整描述高预期幻想、行动暴露差距、自我否定、继续规划和缺少反馈的循环。</div>
+            <div class="chips"><a class="chip" href="#"><span class="type-dot raw"></span>从超预期幻想到纸上谈兵</a></div>
+          </div>
+          <div class="evi-item">
+            <div class="evi-claim">用户明确害怕失败戳破能力很强的形象并失去尊重，因此倾向用不做来避免出错。</div>
+            <div class="chips"><a class="chip" href="#"><span class="type-dot raw"></span>害怕强者形象被戳破导致行动回避</a></div>
+          </div>
+
+          <div class="subhead">仍不确定</div>
+          <ul class="uncertain">
+            <li>在害怕评价时完成可验证小闭环能否稳定增加落地经验，尚无后续行为记录。</li>
+          </ul>
+
+          <div class="subhead">原始来源</div>
+          <div class="chips">
+            <a class="chip" href="#"><span class="type-dot raw"></span>从超预期幻想到纸上谈兵：面对失败与自我失望</a>
+            <a class="chip" href="#"><span class="type-dot raw"></span>害怕强者形象被戳破导致行动回避</a>
+          </div>
+        </div>
+      </details>
+
+      <!-- ⑤ 关系图谱（折叠） -->
+      <details class="group" id="s-rel">
+        <summary><span class="chev">▸</span><h2>关系图谱</h2><span class="count">2 出边 · 4 反向 · 8 相关</span></summary>
+        <div class="group-body">
+          <div class="rel-col">
+            <div>
+              <h3>指向其他节点</h3>
+              <div class="rel-row">
+                <span class="rel-kind">相关</span>
+                <a class="chip" href="#"><span class="type-dot entity"></span>ZIP 包上传重试</a>
+                <div class="rel-note">本次工程事故成为失败羞耻和回避机制的新证据。</div>
+              </div>
+              <div class="rel-row">
+                <span class="rel-kind">支持</span>
+                <a class="chip" href="#"><span class="type-dot statement"></span>超预期幻想会把想象变成考核标准</a>
+                <div class="rel-note">两条洞察共享同一保护机制的来源。</div>
+              </div>
+            </div>
+            <div>
+              <h3>被其他节点指向</h3>
+              <div class="rel-row">
+                <span class="rel-kind">对比</span>
+                <a class="chip" href="#"><span class="type-dot statement"></span>用最小可验证行动获取现实反馈</a>
+              </div>
+              <div class="rel-row">
+                <span class="rel-kind">包含</span>
+                <a class="chip" href="#"><span class="type-dot topic"></span>逃避机制与主体感恢复</a>
+              </div>
+              <div class="rel-row">
+                <span class="rel-kind">来源</span>
+                <a class="chip" href="#"><span class="type-dot raw"></span>害怕强者形象被戳破导致行动回避</a>
+              </div>
+            </div>
+          </div>
+
+          <div class="subhead">相关节点</div>
+          <div class="chips">
+            <a class="chip" href="#"><span class="type-dot statement"></span>自我价值审判会遮蔽任务问题</a>
+            <a class="chip" href="#"><span class="type-dot statement"></span>承担责任不等于承担羞耻</a>
+            <a class="chip" href="#"><span class="type-dot statement"></span>从审视自己回到审视事情</a>
+            <a class="chip" href="#"><span class="type-dot entity"></span>灰度发布</a>
+          </div>
+        </div>
+      </details>
+
+      <!-- ⑥ 元信息（默认隐藏） -->
+      <details class="meta">
+        <summary>元信息 / 调试字段</summary>
+        <div class="meta-grid">
+          <div class="meta-cell"><dt>Node ID</dt><dd>statement-失败羞耻会推动规划代替行动</dd></div>
+          <div class="meta-cell"><dt>Type</dt><dd>statement</dd></div>
+          <div class="meta-cell"><dt>Created</dt><dd>2026-07-27 15:52</dd></div>
+          <div class="meta-cell"><dt>Updated</dt><dd>2026-08-10 21:05</dd></div>
+        </div>
+      </details>
+    </article>
+  </div>
+</div>
+
+<!-- ============ 主题示例 ============ -->
+<div class="view" id="view-topic">
+  <div class="doc-grid">
+    <aside class="toc">
+      <div class="toc-eyebrow">本页目录</div>
+      <ol>
+        <li><a href="#t-tldr" data-spy class="active">综述导读</a></li>
+        <li><a href="#t-read" data-spy>精读<small>跨记录脉络</small></a></li>
+        <li><a href="#t-evo" data-spy>演变<small>7 个阶段</small></a></li>
+        <li><a href="#t-mem" data-spy>成员<small>3 侧面 · 24 成员</small></a></li>
+        <li><a href="#t-src" data-spy>证据与开放问题<small>折叠</small></a></li>
+      </ol>
+    </aside>
+
+    <article class="reading">
+      <a class="back" href="#">← 返回主题阅读</a>
+
+      <section class="block" id="t-tldr" style="scroll-margin-top:96px;margin-top:0">
+        <div class="type-line"><span class="type-dot topic"></span>主题 · Topic · 跨领域模式</div>
+        <h1 class="doc-title">逃避机制与主体感恢复</h1>
+        <div class="pills">
+          <span class="pill accent"><b>置信度</b> 0.98</span>
+          <span class="pill"><b>24</b> 个成员</span>
+          <span class="pill"><b>3</b> 个侧面</span>
+          <span class="pill">跨 <b>16</b> 条记录 · 7 阶段</span>
+        </div>
+        <div class="tldr">
+          <span class="lead-label">核心理解</span>
+          <p>逃避是在困难、不确定、评价、责任或目标突然中断时，寻求短期安全与连续感的机制。手机、确定性支线、完美规划和持续工作都可能承担这一功能；恢复不是排除所有替代活动，而是回到具体事实、边界和最小反馈。</p>
+        </div>
+      </section>
+
+      <section class="block" id="t-read">
+        <div class="block-head"><h2>精读</h2><span class="count">跨记录脉络</span></div>
+        <div class="prose">
+          <p>这个主题把看似分散的刷手机、探索新工具、埋头工作、推迟关系责任和回避模糊家务，组织为同一类反应：在困难、不确定与外部压力下绕开当下问题。各成员不只是描述「没做」，还分别揭示即时奖励、正确答案、忙碌合理性、人格羞耻和责任模糊，如何让逃避获得短期保护功能。</p>
+          <p>脉络上，早期记录先识别任务与手机层面的即时偏离，随后扩展到工作容器化、关系维护和开放人生问题，再在共同生活中出现「把未知责任改写为具体状态与最小步骤」的恢复方向。主体感恢复不是强迫完成全部任务，而是辨认自己正在保护什么、区分主动选择与外部推动。</p>
+        </div>
+        <details class="raw-fold">
+          <summary>完整综合（原 detail 五段原文，未删改）</summary>
+          <div class="fold-body">
+            <div class="prose">
+              <p>组织视角：逃避机制与主体感恢复把看似分散的刷手机、探索新工具、埋头工作、推迟关系责任和回避模糊家务，组织为同一类在困难、不确定与外部压力下绕开当下问题的反应……</p>
+              <p style="color:var(--faint)">（此处保留原始 detail 全文的其余四段：脉络与边界、结果责任与人格威胁、第二记忆优化场景、下班后目标中断。）</p>
+            </div>
+          </div>
+        </details>
+      </section>
+
+      <section class="block" id="t-evo">
+        <div class="block-head"><h2>演变</h2><span class="count">7 个阶段</span></div>
+        <div class="history">
+          <div class="history-item topic"><div class="history-date">2026-05-04</div><div class="history-state">在项目探索和手机使用中识别即时偏离与假装做事。</div></div>
+          <div class="history-item topic"><div class="history-date">2026-05-08</div><div class="history-state">工作忙和外部要求被识别为压缩主体感的长期结构。</div></div>
+          <div class="history-item topic"><div class="history-date">2026-07-13</div><div class="history-state">模糊生活责任被拆成具体烦累、边界与最小行动。</div></div>
+          <div class="history-item topic"><div class="history-date">2026-07-23</div><div class="history-state">工作逃避连接到未知过程、结果责任、能力威胁和确定性支线。</div></div>
+          <div class="history-item topic"><div class="history-date">2026-07-27</div><div class="history-state">超预期幻想和人格审判被改写为事实审视、最小反馈与责任去羞耻。</div></div>
+          <div class="history-item topic"><div class="history-date">2026-07-28</div><div class="history-state">第二记忆优化暴露完美终局造成的规划停滞，把最小验证细化为获取改变决策的信息。</div></div>
+          <div class="history-item topic"><div class="history-date">2026-08-05</div><div class="history-state">下班后的空荡与个人项目推进感揭示，主体性恢复和延迟面对生活可能同时存在。</div></div>
+        </div>
+      </section>
+
+      <!-- 24 段成员合同 → 按 facet 分组折叠 -->
+      <section class="block" id="t-mem">
+        <div class="block-head"><h2>成员</h2><span class="count">按 3 个侧面分组 · 共 24 个成员</span></div>
+        <p class="note">原设计把 24 段「成员理由 + 依据摘录」全部平铺，单页极长。这里改为<b>按 facet 分组折叠</b>：默认只见 3 个侧面标题与成员数，展开某一侧面才显示其成员，成员的「理由 / 依据」再降一级。</p>
+
+        <details class="facet" open>
+          <summary><span class="chev">▸</span><div><div class="facet-name">即时偏离与任务回避</div><div class="facet-sum">困难与不适通过探索、手机、确定性支线或拖延转成短期绕开。</div></div><span class="facet-count">4 成员</span></summary>
+          <div class="facet-body">
+            <div class="member">
+              <a class="chip" href="#"><span class="type-dot statement"></span>用有用探索合理化任务逃避</a>
+              <div class="member-reason">回答「即时偏离与任务回避」侧：用户会用看似有用的新探索合理化对困难主线的逃避，并因此承受双重焦虑。</div>
+              <div class="member-excerpt">依据：用户识别到自己会用看似有用的新探索合理化对困难主线的逃避。</div>
+            </div>
+            <div class="member">
+              <a class="chip" href="#"><span class="type-dot statement"></span>手机逃避延长任务拖延</a>
+              <div class="member-reason">回答「即时偏离与任务回避」侧：手机是逃避压力的即时出口，任务与刷手机混用会通过假装做事延长拖延。</div>
+            </div>
+            <div class="member">
+              <a class="chip" href="#"><span class="type-dot statement"></span>困难与责任压力触发任务回避</a>
+              <div class="member-reason">回答「即时偏离与任务回避」侧：抗拒、麻烦或吃力的任务更易触发拖延、绕开和不愿承担。</div>
+            </div>
+            <div class="member">
+              <a class="chip" href="#"><span class="type-dot statement"></span>确定性任务成为工作逃避出口</a>
+              <div class="member-reason">回答「即时偏离与任务回避」侧：能快速获得成就感的支线吸走注意力，但未完成主任务的焦虑会累积。</div>
+            </div>
+          </div>
+        </details>
+
+        <details class="facet">
+          <summary><span class="chev">▸</span><div><div class="facet-name">工作容器与结果威胁</div><div class="facet-sum">工作压力之外，完美终局和高光想象也会让规划替代真实行动。</div></div><span class="facet-count">6 成员</span></summary>
+          <div class="facet-body">
+            <div class="member"><a class="chip" href="#"><span class="type-dot statement"></span>失败羞耻会推动规划代替行动</a><div class="member-reason">当前正在阅读的这条洞察即属于本侧面。</div></div>
+            <div class="member"><a class="chip" href="#"><span class="type-dot statement"></span>任务失败会威胁能力与工作安全感</a></div>
+            <div class="member"><a class="chip" href="#"><span class="type-dot statement"></span>外部要求淹没主体感</a></div>
+            <div class="member"><a class="chip" href="#"><span class="type-dot statement"></span>超预期幻想会把想象变成考核标准</a></div>
+            <div class="member"><a class="chip" href="#"><span class="type-dot statement"></span>用工作的确定正确回避开放问题</a></div>
+            <div class="member"><a class="chip" href="#"><span class="type-dot statement"></span>感受静音下的工作容器化与惯性滑行</a></div>
+          </div>
+        </details>
+
+        <details class="facet">
+          <summary><span class="chev">▸</span><div><div class="facet-name">具体化、反馈与去羞耻</div><div class="facet-sum">恢复主体感需最小反馈、去羞耻，并辨认停止工作后的空荡与个人项目的真实推进感。</div></div><span class="facet-count">14 成员</span></summary>
+          <div class="facet-body">
+            <div class="member"><a class="chip" href="#"><span class="type-dot statement"></span>用最小可验证行动获取现实反馈</a></div>
+            <div class="member"><a class="chip" href="#"><span class="type-dot statement"></span>承担责任不等于承担羞耻</a></div>
+            <div class="member"><a class="chip" href="#"><span class="type-dot statement"></span>用具体描述替代未知责任的人格审判</a></div>
+            <div class="member"><a class="chip" href="#"><span class="type-dot statement"></span>自我价值审判会遮蔽任务问题</a></div>
+            <div class="member" style="color:var(--faint);font-size:13px;padding-top:12px">…及另外 10 个成员（含 4 条原始 raw 记录）</div>
+          </div>
+        </details>
+      </section>
+
+      <details class="group" id="t-src">
+        <summary><span class="chev">▸</span><h2>证据与开放问题</h2><span class="count">9 条证据 · 1 开放问题 · 边界规则</span></summary>
+        <div class="group-body">
+          <div class="subhead">开放问题</div>
+          <div class="evi-item">
+            <div class="evi-claim">把个人项目与回家生活都安排为可完成的小步骤后，推进感能否保留而空荡与回避下降？</div>
+            <div class="rel-note">依据：个人项目当前同时具有真实成就反馈和可能延迟回家的双重解释。</div>
+          </div>
+          <div class="subhead">成员边界</div>
+          <div class="rel-note">只纳入成员自身明确描述绕开任务、开放问题或生活责任的机制；一般疲惫、睡眠或关系感受不自动加入。</div>
+        </div>
+      </details>
+
+      <details class="meta">
+        <summary>元信息 / 调试字段</summary>
+        <div class="meta-grid">
+          <div class="meta-cell"><dt>Node ID</dt><dd>topic-逃避机制与主体感恢复</dd></div>
+          <div class="meta-cell"><dt>Topic kind</dt><dd>cross_domain_pattern</dd></div>
+        </div>
+      </details>
+    </article>
+  </div>
+</div>
+
+</main>
+
+<script>
+(function () {
+  // view switch
+  var buttons = document.querySelectorAll(".switch button");
+  var views = { statement: document.getElementById("view-statement"), topic: document.getElementById("view-topic") };
+  buttons.forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      buttons.forEach(function (b) { b.classList.remove("active"); });
+      btn.classList.add("active");
+      Object.keys(views).forEach(function (k) { views[k].classList.toggle("active", k === btn.dataset.view); });
+      window.scrollTo(0, 0);
+    });
+  });
+
+  // scroll-spy: highlight current TOC entry
+  function setupSpy() {
+    var active = document.querySelector(".view.active");
+    if (!active) return;
+    var links = active.querySelectorAll(".toc a[data-spy]");
+    var map = {};
+    links.forEach(function (a) { var id = a.getAttribute("href").slice(1); map[id] = a; });
+    var sections = Array.prototype.map.call(links, function (a) { return document.getElementById(a.getAttribute("href").slice(1)); }).filter(Boolean);
+    var obs = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (e.isIntersecting) {
+          links.forEach(function (l) { l.classList.remove("active"); });
+          if (map[e.target.id]) map[e.target.id].classList.add("active");
+        }
+      });
+    }, { rootMargin: "-90px 0px -65% 0px", threshold: 0 });
+    sections.forEach(function (s) { obs.observe(s); });
+  }
+  setupSpy();
+})();
+</script>
+</body>
+</html>

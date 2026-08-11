@@ -599,16 +599,31 @@ def render_static_overview(model: dict[str, Any]) -> str:
         )
 
     def node_row(node: dict[str, Any]) -> str:
-        state = node.get("current_state") or node.get("status") or node.get("summary") or ""
-        detail = node.get("detail") or node.get("summary") or ""
+        reading = (node.get("attrs") or {}).get("reading")
+        reading = reading if isinstance(reading, dict) else {}
+        lead = reading.get("tldr") or node.get("current_state") or node.get("status") or node.get("summary") or ""
+        narrative = reading.get("narrative") or node.get("detail") or node.get("summary") or ""
+        highlights = reading.get("highlights") if isinstance(reading.get("highlights"), list) else []
+        highlights_html = (
+            '<ul class="row-highlights">'
+            + "".join(f"<li>{escape(item)}</li>" for item in highlights)
+            + "</ul>"
+        ) if highlights else ""
+        original_detail = node.get("detail") or ""
+        original_fold = (
+            f'<details class="raw-fold"><summary>完整综合（原始 detail）</summary>'
+            f'<div class="prose">{render_detail(str(original_detail))}</div></details>'
+        ) if (reading.get("narrative") and original_detail) else ""
         sources = "、".join(escape(source["title"]) for source in node.get("sources", []))
         return (
             '<details class="relation-row">'
             f'<summary>{escape(type_labels.get(node["type"], node["type"]))} · <strong>{escape(node["title"])}</strong></summary>'
-            f'<p class="row-summary">{escape(state)}</p>'
+            f'<p class="row-summary">{escape(lead)}</p>'
             f'{topic_reading_html(node)}'
             f'{topic_contract_html(node)}'
-            f'<div class="prose">{render_detail(str(detail))}</div>'
+            f'<div class="prose">{render_detail(str(narrative))}</div>'
+            f'{highlights_html}'
+            f'{original_fold}'
             f'<div class="row-meta" style="text-align:left">{len(node.get("sources", []))} 来源'
             f'{(" · " + sources) if sources else ""}</div>'
             "</details>"

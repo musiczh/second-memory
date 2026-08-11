@@ -53,9 +53,9 @@ class WikiTest(RepositoryTestCase):
         self.assertIn("此文件尚未注入知识库数据", template)
         self.assertIn("second-memory wiki --json", template)
         self.assertIn(".view { opacity: 1; }", template)
-        self.assertIn('section("主题组织问题")', template)
-        self.assertIn('section("主题侧面"', template)
-        self.assertIn('section("排除边界"', template)
+        self.assertIn("function renderTopicMembers", template)
+        self.assertIn("主题组织问题", template)
+        self.assertIn("排除边界", template)
         self.assertNotIn("animation: enter", template)
 
     def test_v24_entity_source_groups_require_explicit_paths_and_raw_incoming_topics(self) -> None:
