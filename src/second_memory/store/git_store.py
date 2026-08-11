@@ -33,10 +33,6 @@ class GitStorage:
         if email.returncode != 0 or not email.stdout.strip():
             self._git("config", "user.email", "second-memory@local")
 
-    def add_paths(self, paths: list[str]) -> None:
-        if paths:
-            self._git("add", "--", *paths)
-
     def status_porcelain(self) -> list[str]:
         result = self._git("status", "--porcelain")
         return [line for line in result.stdout.splitlines() if line.strip()]
@@ -51,15 +47,31 @@ class GitStorage:
         if unknown:
             raise DirtyWorktreeError("unknown worktree changes: " + "; ".join(unknown))
 
-    def commit_all(self, message: str) -> str | None:
-        self._git("add", "-A")
-        diff = self._git("diff", "--cached", "--quiet", check=False)
+    def commit_paths(self, message: str, paths: list[str]) -> str | None:
+        """Commit only transaction-owned paths, leaving unrelated staged work alone."""
+        unique = sorted({path for path in paths if self._path_has_content_or_history(path)})
+        if not unique:
+            return self.current_commit()
+        self._git("add", "-A", "--", *unique)
+        diff = self._git("diff", "--cached", "--quiet", "--", *unique, check=False)
         if diff.returncode == 0:
             return self.current_commit()
-        result = self._git("commit", "-m", message, check=False)
+        result = self._git("commit", "--only", "-m", message, "--", *unique, check=False)
         if result.returncode != 0:
             raise SecondMemoryError(result.stderr.strip() or "git commit failed", "git_commit_failed")
         return self.current_commit()
+
+    def _path_has_content_or_history(self, relative: str) -> bool:
+        path = self.repo / relative
+        if path.is_file() or (path.is_dir() and any(value.is_file() for value in path.rglob("*"))):
+            return True
+        return bool(self._git("ls-files", "--", relative, check=False).stdout.strip())
+
+    def unstage_paths(self, paths: list[str]) -> None:
+        unique = sorted(set(paths))
+        if not unique:
+            return
+        self._git("restore", "--staged", "--", *unique, check=False)
 
     def current_commit(self) -> str | None:
         result = self._git("rev-parse", "--short", "HEAD", check=False)
@@ -72,21 +84,3 @@ class GitStorage:
         if result.returncode != 0:
             return None
         return result.stdout.strip() or None
-
-    def pull_ff(self) -> dict[str, object]:
-        """Fast-forward the repo to its upstream. Network/auth/divergence failures
-        are reported, never raised, so callers can keep working against local HEAD."""
-        before = self.full_commit()
-        upstream = self._git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}", check=False)
-        if upstream.returncode != 0:
-            return {"attempted": False, "ok": False, "updated": False, "before": before, "after": before, "message": "no upstream branch configured"}
-        result = self._git("pull", "--ff-only", check=False)
-        after = self.full_commit()
-        return {
-            "attempted": True,
-            "ok": result.returncode == 0,
-            "updated": bool(before and after and before != after),
-            "before": before,
-            "after": after,
-            "message": (result.stdout + result.stderr).strip(),
-        }

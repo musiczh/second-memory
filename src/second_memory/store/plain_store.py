@@ -10,13 +10,10 @@ class PlainFSStorage:
     def __init__(self, repo: Path) -> None:
         self.repo = repo
 
-    def add_paths(self, paths: list[str]) -> None:
-        return None
-
     def current_commit(self) -> str | None:
         return None
 
-    def commit_all(self, message: str) -> str | None:
+    def commit_paths(self, message: str, paths: list[str]) -> str | None:
         history = self.repo / ".kb" / "history.jsonl"
         history.parent.mkdir(parents=True, exist_ok=True)
         entry = {

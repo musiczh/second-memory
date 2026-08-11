@@ -15,7 +15,7 @@ VALID_SCOPES = {"shared", "agent"}
 # compiled layer from the raw archive. It is intentionally separate from the
 # package version (__init__.__version__): plain code updates that do not change
 # compile rules must NOT bump this, so `update` will not force a rebuild.
-KB_VERSION = "1.0.0"
+KB_VERSION = "2.4.0"
 
 
 def default_repo_for_scope(scope: str = "shared", agent: str | None = None) -> Path:
@@ -77,7 +77,7 @@ def default_config(repo: Path, scope: str, agent: str | None, backend: str) -> d
     if scope not in VALID_SCOPES:
         raise ValidationError("scope must be shared or agent")
     return {
-        "schema": 1,
+        "schema": 2,
         "scope": scope,
         "agent": agent or "",
         "path": str(repo),
