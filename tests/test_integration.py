@@ -44,6 +44,20 @@ from second_memory.wiki import build_wiki_model
 from tests.helpers import RepositoryTestCase, content, event_semantics, topic_attrs
 
 
+CODE_UPDATE_ENV = {
+    "SECOND_MEMORY_UPDATE_PULL": json.dumps({
+        "attempted": True,
+        "ok": True,
+        "updated": False,
+        "before": "test-code-commit",
+        "after": "test-code-commit",
+        "target": "test-code-commit",
+        "remote_branch": "origin/master",
+        "message": "test code already current",
+    })
+}
+
+
 class CompileIntegrationTest(RepositoryTestCase):
     def test_zero_node_raw_compiles_without_polluting_graph_and_counts_for_consolidation(self) -> None:
         raw_id = self.add("普通聊天", "我今天和对象随口聊了几句，没有形成决定、承诺或结果。", "2026-08-05")
@@ -1209,7 +1223,7 @@ class QualityRepairIntegrationTest(RepositoryTestCase):
         )
         self.assertIsNone(build_consolidation_request(self.repo))
 
-        result = CliRunner().invoke(app, ["update", "--emit-request", "--repo", str(self.repo), "--json"])
+        result = CliRunner().invoke(app, ["update", "--emit-request", "--repo", str(self.repo), "--json"], env=CODE_UPDATE_ENV)
 
         self.assertEqual(0, result.exit_code, result.output)
         request = json.loads(result.stdout)["data"]["llm_request"]
@@ -1221,7 +1235,7 @@ class QualityRepairIntegrationTest(RepositoryTestCase):
             apply_response(self.repo, self.repair_plan(request), command="consolidate")
 
     def test_failed_quality_repair_is_atomic_and_preserves_pending_queue(self) -> None:
-        emitted = CliRunner().invoke(app, ["update", "--emit-request", "--repo", str(self.repo), "--json"])
+        emitted = CliRunner().invoke(app, ["update", "--emit-request", "--repo", str(self.repo), "--json"], env=CODE_UPDATE_ENV)
         request = json.loads(emitted.stdout)["data"]["llm_request"]
         before_manifest = (self.repo / ".kb" / "manifest.json").read_bytes()
         before_pages = {node.path: node.path.read_bytes() for node in list_index_pages(self.repo)}
@@ -1240,7 +1254,7 @@ class QualityRepairIntegrationTest(RepositoryTestCase):
         self.assertEqual(pending_ids, consolidation_state(load_manifest(self.repo))["pending_raw"])
 
     def test_quality_repair_rejects_remaining_weak_entity_evidence_atomically(self) -> None:
-        emitted = CliRunner().invoke(app, ["update", "--emit-request", "--repo", str(self.repo), "--json"])
+        emitted = CliRunner().invoke(app, ["update", "--emit-request", "--repo", str(self.repo), "--json"], env=CODE_UPDATE_ENV)
         request = json.loads(emitted.stdout)["data"]["llm_request"]
         before_manifest = (self.repo / ".kb" / "manifest.json").read_bytes()
         before_pages = {node.path: node.path.read_bytes() for node in list_index_pages(self.repo)}
@@ -1257,7 +1271,7 @@ class QualityRepairIntegrationTest(RepositoryTestCase):
         self.assertEqual(before_pages, {path: path.read_bytes() for path in before_pages})
 
     def test_quality_repair_rejects_remaining_compiler_policy_detail_atomically(self) -> None:
-        emitted = CliRunner().invoke(app, ["update", "--emit-request", "--repo", str(self.repo), "--json"])
+        emitted = CliRunner().invoke(app, ["update", "--emit-request", "--repo", str(self.repo), "--json"], env=CODE_UPDATE_ENV)
         request = json.loads(emitted.stdout)["data"]["llm_request"]
         before_manifest = (self.repo / ".kb" / "manifest.json").read_bytes()
         before_pages = {node.path: node.path.read_bytes() for node in list_index_pages(self.repo)}
@@ -1275,7 +1289,7 @@ class QualityRepairIntegrationTest(RepositoryTestCase):
 
     def test_successful_quality_repair_clears_weak_detail_without_consuming_pending(self) -> None:
         runner = CliRunner()
-        emitted = runner.invoke(app, ["update", "--emit-request", "--repo", str(self.repo), "--json"])
+        emitted = runner.invoke(app, ["update", "--emit-request", "--repo", str(self.repo), "--json"], env=CODE_UPDATE_ENV)
         request = json.loads(emitted.stdout)["data"]["llm_request"]
         pending_ids = list(consolidation_state(load_manifest(self.repo))["pending_raw"])
 
@@ -1894,7 +1908,7 @@ class RawOnlySequentialRebuildTest(RepositoryTestCase):
 
         self.assertEqual("consolidate", determine_update_mode(self.repo)["mode"])
         runner = CliRunner()
-        emitted = runner.invoke(app, ["update", "--emit-request", "--repo", str(self.repo), "--json"])
+        emitted = runner.invoke(app, ["update", "--emit-request", "--repo", str(self.repo), "--json"], env=CODE_UPDATE_ENV)
         self.assertEqual(0, emitted.exit_code, emitted.output)
         emitted_payload = json.loads(emitted.stdout)
         self.assertEqual("consolidate", emitted_payload["data"]["mode"])
@@ -2024,7 +2038,7 @@ class RawOnlySequentialRebuildTest(RepositoryTestCase):
                 apply_rebuild_response(self.repo, self._consolidation_plan(tail_request))
 
         runner = CliRunner()
-        emitted = runner.invoke(app, ["update", "--emit-request", "--repo", str(self.repo), "--json"])
+        emitted = runner.invoke(app, ["update", "--emit-request", "--repo", str(self.repo), "--json"], env=CODE_UPDATE_ENV)
         self.assertEqual(0, emitted.exit_code, emitted.output)
         payload = json.loads(emitted.stdout)
         self.assertEqual("rebuild", payload["data"]["update_mode"])

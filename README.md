@@ -48,7 +48,7 @@ second-memory init --repo /tmp/second-memory-test --scope agent --agent test --j
 export SECOND_MEMORY_REPO=/tmp/second-memory-test
 ```
 
-代码仓库与运行时知识库是两套独立 Git 仓库。Skill 更新需要在代码仓库显式执行 `git pull --ff-only`；`update --emit-request` 不会隐式修改代码仓库。
+代码仓库与运行时知识库是两套独立 Git 仓库。`update --emit-request` 会先在 Skill 代码仓库执行 `git pull --ff-only origin master`；若 HEAD 前进，CLI 会用最新代码重新启动一次，然后才比较代码中的 `KB_VERSION` 与知识库 manifest 版本。代码无法精确快进到远程 `master` 时，更新必须停止，不能用旧代码继续判断或重建知识库。
 
 ## Agent 工作流
 
@@ -144,6 +144,15 @@ printf '%s' "$TOPIC_PLAN_JSON" | second-memory topics --apply-response --stdin -
 ```bash
 second-memory update --emit-request --json
 ```
+
+更新固定先同步代码，再判断知识库：
+
+1. 在 Skill／CLI 代码仓库拉取 `origin/master`，并要求本地 HEAD 最终与远程 `master` 完全一致。
+2. 若代码 HEAD 前进，CLI 最多重新启动一次，确保后续读取的是新代码中的 `KB_VERSION` 与编译规则。
+3. 比较新代码的 `KB_VERSION` 与知识库 manifest 的 `kb_version`；不一致时进入 raw-only sequential rebuild，一致时继续检查 pending、Consolidation 和质量修复。
+4. 拉取失败、历史分叉或无法确认已位于远程 `master` 时直接返回 `code_update_failed`，不读取旧版本结论，也不修改知识库。
+
+响应中的 `code_update` 保存本次同步的前后 commit、目标 `origin/master` 与是否发生更新。单纯代码变化但 `KB_VERSION` 未变化时不会触发 rebuild。
 
 模式优先级固定为：
 

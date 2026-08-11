@@ -1988,6 +1988,23 @@ def skill_code_commit() -> str | None:
     return GitStorage(root).full_commit()
 
 
+def pull_skill_code() -> dict[str, Any]:
+    """Fast-forward the installed Skill／CLI checkout to ``origin/master``."""
+    root = skill_repo_root()
+    if not (root / ".git").exists():
+        return {
+            "attempted": False,
+            "ok": False,
+            "updated": False,
+            "before": None,
+            "after": None,
+            "target": None,
+            "remote_branch": "origin/master",
+            "message": "skill code repo is not a git checkout",
+        }
+    return GitStorage(root).pull_ff("origin", "master")
+
+
 def version_drift(repo: Path) -> bool:
     return load_manifest(repo).get("kb_version") != KB_VERSION
 
@@ -2096,6 +2113,7 @@ __all__ = [
     "list_index_pages",
     "load_manifest",
     "manifest_drift",
+    "pull_skill_code",
     "raw_lookup",
     "read_pending",
     "rebuild_state",
