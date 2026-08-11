@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import sys
 import webbrowser
 from pathlib import Path
@@ -10,35 +9,45 @@ from typing import Optional
 import typer
 
 from .compiler import (
+    CONSOLIDATION_BATCH_SIZE,
     add_raw,
     all_raw_entries,
-    apply_merge_response,
+    apply_rebuild_response,
     apply_response,
     build_compile_request,
+    build_consolidation_request,
+    build_rebuild_request,
+    build_topic_request,
+    consolidation_state,
+    determine_update_mode,
+    graph_stats,
+    finalize_rebuild,
     initialize,
     list_compiled_pages,
     load_manifest,
     manifest_drift,
-    pull_skill_code,
     read_pending,
+    rebuild_state,
     skill_code_commit,
+    transaction_state,
     version_drift,
 )
 from .config import KB_VERSION, resolve_repo
-from .errors import SecondMemoryError
-from .merge import build_merge_request
+from .errors import SecondMemoryError, StaleSessionError, ValidationError
 from .recap import build_recap_request
 from .retriever import search_level1, search_level2_request
 from .reviewer import review_request
 from .store.git_store import GitStorage
-from .tips import next_tip
 from .utils import json_dumps
-from .wiki import build_wiki_html
+from .wiki import build_wiki_html, build_wiki_model
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 
 
-def emit(command: str, data: object, json_output: bool = True, *, tip: object = None) -> None:
+def emit(command: str, data: object, json_output: bool = True) -> None:
+    tip = data.get("tip") if isinstance(data, dict) else None
+    if tip:
+        data = {key: value for key, value in data.items() if key != "tip"}
     payload = {"ok": True, "command": command, "data": data, "error": None}
     if tip:
         payload["tip"] = tip
@@ -54,32 +63,6 @@ def fail(command: str, exc: Exception, json_output: bool = True) -> None:
 
 def read_stdin_text() -> str:
     return sys.stdin.read()
-
-
-# When the code repo is fast-forwarded mid-run we re-exec the CLI so the new code
-# loads; this env var carries the original pull result forward and guards the
-# re-exec so it can happen at most once.
-_REEXEC_PULL_ENV = "SECOND_MEMORY_UPDATE_PULL"
-
-
-def sync_skill_code() -> dict:
-    """Pull the Skill/CLI code repo, then re-exec this command if it advanced.
-
-    A plain in-process pull is not enough: ``KB_VERSION`` and the compile helpers
-    are bound at import time, so judging drift right after a fast-forward would
-    still use the old code. When the pull moves HEAD we re-exec with the freshly
-    pulled code; the original pull result is carried through ``_REEXEC_PULL_ENV``
-    so the post-exec run reports it and never pulls (or re-execs) twice.
-    """
-    carried = os.environ.get(_REEXEC_PULL_ENV)
-    if carried is not None:
-        return json.loads(carried)
-    pull = pull_skill_code()
-    if pull.get("updated"):
-        env = dict(os.environ)
-        env[_REEXEC_PULL_ENV] = json_dumps(pull)
-        os.execve(sys.executable, [sys.executable, "-m", "second_memory.cli", *sys.argv[1:]], env)
-    return pull
 
 
 @app.command()
@@ -134,7 +117,7 @@ def compile(
             return
         if apply_response_flag:
             response = json.loads(read_stdin_text() if stdin else sys.stdin.read())
-            emit(command, apply_response(target, response, command="compile", replace_compiled=False), json_output=True, tip=next_tip(target))
+            emit(command, apply_response(target, response, command="compile"), json_output=True)
             return
         raise typer.BadParameter("use --emit-request or --apply-response --stdin")
     except Exception as exc:
@@ -146,6 +129,7 @@ def rebuild(
     emit_request: bool = typer.Option(False, "--emit-request"),
     apply_response_flag: bool = typer.Option(False, "--apply-response"),
     stdin: bool = typer.Option(False, "--stdin"),
+    finalize: bool = typer.Option(False, "--finalize", help="Finalize a completed rebuild workspace after a recoverable promotion failure."),
     repo: Optional[str] = typer.Option(None, "--repo"),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
@@ -153,12 +137,93 @@ def rebuild(
     try:
         target = resolve_repo(repo)
         if emit_request:
-            request = build_compile_request(target, task="rebuild", raw_entries=all_raw_entries(target), mode="rebuild")
-            emit(command, {"llm_request": request, "raw_count": len(request["context"]["raw_entries"])}, json_output=True)
+            request = build_rebuild_request(target)
+            state = rebuild_state(target)
+            emit(
+                command,
+                {
+                    "mode": request["context"]["mode"] if request else "finalize",
+                    "llm_request": request,
+                    "raw_count": state["total"],
+                    "rebuild": state,
+                    "ready_to_finalize": request is None and state["phase"] == "consolidate",
+                },
+                json_output=True,
+            )
             return
         if apply_response_flag:
             response = json.loads(read_stdin_text() if stdin else sys.stdin.read())
-            emit(command, apply_response(target, response, command="rebuild", replace_compiled=True), json_output=True, tip=next_tip(target))
+            emit(command, apply_rebuild_response(target, response), json_output=True)
+            return
+        if finalize:
+            emit(command, {**finalize_rebuild(target), "rebuild_complete": True}, json_output=True)
+            return
+        raise typer.BadParameter("use --emit-request, --apply-response --stdin, or --finalize")
+    except Exception as exc:
+        fail(command, exc, json_output=True)
+
+
+@app.command()
+def consolidate(
+    emit_request: bool = typer.Option(False, "--emit-request"),
+    apply_response_flag: bool = typer.Option(False, "--apply-response"),
+    stdin: bool = typer.Option(False, "--stdin"),
+    repo: Optional[str] = typer.Option(None, "--repo"),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    command = "consolidate"
+    try:
+        target = resolve_repo(repo)
+        if emit_request:
+            request = build_consolidation_request(target)
+            state = consolidation_state(load_manifest(target))
+            emit(
+                command,
+                {
+                    "mode": "consolidate" if request else "noop",
+                    "llm_request": request,
+                    "pending": len(state["pending_raw"]),
+                    "batch_size": CONSOLIDATION_BATCH_SIZE,
+                },
+                json_output=True,
+            )
+            return
+        if apply_response_flag:
+            response = json.loads(read_stdin_text() if stdin else sys.stdin.read())
+            emit(command, apply_response(target, response, command="consolidate"), json_output=True)
+            return
+        raise typer.BadParameter("use --emit-request or --apply-response --stdin")
+    except Exception as exc:
+        fail(command, exc, json_output=True)
+
+
+@app.command()
+def topics(
+    emit_request: bool = typer.Option(False, "--emit-request"),
+    apply_response_flag: bool = typer.Option(False, "--apply-response"),
+    stdin: bool = typer.Option(False, "--stdin"),
+    repo: Optional[str] = typer.Option(None, "--repo"),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    command = "topics"
+    try:
+        target = resolve_repo(repo)
+        if emit_request:
+            request = build_topic_request(target)
+            emit(
+                command,
+                {
+                    "mode": "topics",
+                    "llm_request": request,
+                    "statements": len(request["context"]["statement_catalog"]),
+                    "existing_topics": len(request["context"]["existing_topics"]),
+                },
+                json_output=True,
+            )
+            return
+        if apply_response_flag:
+            response = json.loads(read_stdin_text() if stdin else sys.stdin.read())
+            emit(command, apply_response(target, response, command="topics"), json_output=True)
             return
         raise typer.BadParameter("use --emit-request or --apply-response --stdin")
     except Exception as exc:
@@ -227,35 +292,11 @@ def recap(
 
 
 @app.command()
-def merge(
-    emit_request: bool = typer.Option(False, "--emit-request"),
-    apply_response_flag: bool = typer.Option(False, "--apply-response"),
-    stdin: bool = typer.Option(False, "--stdin"),
-    repo: Optional[str] = typer.Option(None, "--repo"),
-    json_output: bool = typer.Option(False, "--json"),
-) -> None:
-    command = "merge"
-    try:
-        target = resolve_repo(repo)
-        if emit_request:
-            request = build_merge_request(target)
-            pages = len(request["context"]["pages"]) if request else 0
-            emit(command, {"llm_request": request, "pages": pages}, json_output=True)
-            return
-        if apply_response_flag:
-            response = json.loads(read_stdin_text() if stdin else sys.stdin.read())
-            emit(command, apply_merge_response(target, response, command="merge"), json_output=True)
-            return
-        raise typer.BadParameter("use --emit-request or --apply-response --stdin")
-    except Exception as exc:
-        fail(command, exc, json_output=True)
-
-
-@app.command()
 def update(
     emit_request: bool = typer.Option(False, "--emit-request"),
     apply_response_flag: bool = typer.Option(False, "--apply-response"),
     stdin: bool = typer.Option(False, "--stdin"),
+    finalize: bool = typer.Option(False, "--finalize", help="Finalize a completed rebuild workspace after a recoverable promotion failure."),
     repo: Optional[str] = typer.Option(None, "--repo"),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
@@ -263,30 +304,71 @@ def update(
     try:
         target = resolve_repo(repo)
         if emit_request:
-            pull = sync_skill_code()
-            pending = read_pending(target)
-            drift = manifest_drift(target)
-            version_changed = version_drift(target)
-            # Version drift means the compiled layer was built by older rules, so a
-            # full rebuild from the raw archive takes priority over consuming pending.
-            if version_changed or drift:
-                request = build_compile_request(target, task="update", raw_entries=all_raw_entries(target), mode="rebuild")
-                emit(command, {"mode": "rebuild", "pending": len(pending), "drift": drift, "code_update": pull, "version_changed": version_changed, "llm_request": request}, json_output=True)
+            code_commit = skill_code_commit()
+            pull = {
+                "attempted": False,
+                "ok": True,
+                "updated": False,
+                "before": code_commit,
+                "after": code_commit,
+                "message": "automatic code pull is disabled; update the Skill repository explicitly",
+            }
+            decision = determine_update_mode(target)
+            if decision["mode"] == "rebuild":
+                request = build_rebuild_request(target)
+                next_mode = str(request["context"]["mode"]) if request else "finalize"
+                emit(
+                    command,
+                    {
+                        **decision,
+                        "update_mode": "rebuild",
+                        "mode": next_mode,
+                        "code_update": pull,
+                        "llm_request": request,
+                        "ready_to_finalize": request is None,
+                    },
+                    json_output=True,
+                )
                 return
-            if pending:
+            if decision["mode"] == "incremental":
                 request = build_compile_request(target, task="update", mode="incremental")
-                emit(command, {"mode": "incremental", "pending": len(pending), "drift": drift, "code_update": pull, "version_changed": False, "llm_request": request}, json_output=True)
+                emit(command, {**decision, "code_update": pull, "llm_request": request}, json_output=True)
                 return
-            emit(command, {"mode": "noop", "pending": 0, "drift": [], "code_update": pull, "version_changed": False}, json_output=True)
+            if decision["mode"] == "consolidate":
+                request = build_consolidation_request(
+                    target,
+                    task="update",
+                    quality_repair=bool(decision.get("quality_repair")),
+                )
+                emit(command, {**decision, "code_update": pull, "llm_request": request}, json_output=True)
+                return
+            emit(command, {**decision, "code_update": pull}, json_output=True)
             return
         if apply_response_flag:
             response = json.loads(read_stdin_text() if stdin else sys.stdin.read())
-            # Rebuild (replace) when the version drifted or pages drifted; only an
-            # incremental compile of fresh pending entries keeps the existing wiki.
-            replace = version_drift(target) or bool(manifest_drift(target)) or not read_pending(target)
-            emit(command, apply_response(target, response, command="update", replace_compiled=replace), json_output=True, tip=next_tip(target))
+            mode = str(response.get("mode") or response.get("llm_response", {}).get("mode") or response.get("data", {}).get("llm_response", {}).get("mode") or "")
+            outer_mode = determine_update_mode(target)["mode"]
+            if outer_mode == "rebuild":
+                request = build_rebuild_request(target)
+                expected_mode = str(request["context"]["mode"]) if request else "finalize"
+                if mode != expected_mode:
+                    raise StaleSessionError(f"update mode changed: expected {expected_mode}, got {mode or 'empty'}")
+                emit(command, apply_rebuild_response(target, response), json_output=True)
+                return
+            expected_mode = outer_mode
+            if mode != expected_mode:
+                raise StaleSessionError(f"update mode changed: expected {expected_mode}, got {mode or 'empty'}")
+            if mode in {"incremental", "consolidate"}:
+                emit(command, apply_response(target, response, command="update"), json_output=True)
+            else:
+                raise ValidationError("update has no applicable plan")
             return
-        raise typer.BadParameter("use --emit-request or --apply-response --stdin")
+        if finalize:
+            if determine_update_mode(target)["mode"] != "rebuild" or build_rebuild_request(target) is not None:
+                raise ValidationError("update rebuild is not ready to finalize")
+            emit(command, {**finalize_rebuild(target), "rebuild_complete": True}, json_output=True)
+            return
+        raise typer.BadParameter("use --emit-request, --apply-response --stdin, or --finalize")
     except Exception as exc:
         fail(command, exc, json_output=True)
 
@@ -301,18 +383,29 @@ def status(
         target = resolve_repo(repo)
         pending = read_pending(target)
         store = GitStorage(target) if (target / ".git").exists() else None
+        manifest = load_manifest(target)
+        consolidation = consolidation_state(manifest)
+        semantic_quality = build_wiki_model(target)["health"]["semantic_quality"]
         data = {
             "repo": str(target),
             "pending": len(pending),
             "pending_raw": pending,
             "pages": len(list_compiled_pages(target)),
+            "counts": graph_stats(target),
             "raw": len(all_raw_entries(target)),
             "recent_commit": store.current_commit() if store else None,
             "manifest_drift": manifest_drift(target),
             "code_commit": skill_code_commit(),
             "kb_version": KB_VERSION,
-            "compiled_kb_version": load_manifest(target).get("kb_version"),
+            "compiled_kb_version": manifest.get("kb_version"),
             "version_drift": version_drift(target),
+            "candidates": manifest.get("candidates", []),
+            "consolidation_pending": len(consolidation["pending_raw"]),
+            "consolidation_due": len(consolidation["pending_raw"]) >= CONSOLIDATION_BATCH_SIZE,
+            "stale_session": False,
+            "transaction_recovery": transaction_state(target),
+            "rebuild": rebuild_state(target),
+            "semantic_quality": semantic_quality,
         }
         emit(command, data, json_output=True)
     except Exception as exc:
@@ -321,19 +414,18 @@ def status(
 
 @app.command()
 def wiki(
-    output: Optional[str] = typer.Option(None, "--output", "-o", help="输出 HTML 路径，默认 <repo>/../wiki.html"),
-    open_browser: bool = typer.Option(False, "--open", help="生成后用浏览器打开。"),
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="HTML output path; defaults to <repo>/../wiki.html."),
+    open_browser: bool = typer.Option(False, "--open", help="Open the generated HTML in the default browser."),
     repo: Optional[str] = typer.Option(None, "--repo"),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     command = "wiki"
     try:
         target = resolve_repo(repo)
-        default_out = target.parent / "wiki.html"
-        out_path = Path(output).expanduser().resolve() if output else default_out
-        result = build_wiki_html(target, out_path)
+        output_path = Path(output).expanduser().resolve() if output else target.parent / "wiki.html"
+        result = build_wiki_html(target, output_path)
         if open_browser:
-            webbrowser.open(out_path.as_uri())
+            webbrowser.open(output_path.as_uri())
         emit(command, result, json_output=True)
     except Exception as exc:
         fail(command, exc, json_output=True)

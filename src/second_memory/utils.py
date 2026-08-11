@@ -23,6 +23,14 @@ def parse_date(value: str | None) -> date:
     return date.fromisoformat(value)
 
 
+def parse_temporal_anchor(value: str) -> tuple[datetime, bool]:
+    pattern = r"\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,6})?)?(?:Z|[+-]\d{2}:\d{2})?)?"
+    if not re.fullmatch(pattern, value):
+        raise ValueError(value)
+    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+    return datetime.fromisoformat(normalized), "T" in value
+
+
 def date_range_last_week() -> tuple[date, date]:
     end = now_local().date()
     return end - timedelta(days=6), end

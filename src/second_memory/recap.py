@@ -69,7 +69,7 @@ def focus_terms(entries: list[RawEntry]) -> set[str]:
 def related_pages(repo: Path, pages: list[Page], focus_set: set[str], terms: set[str]) -> list[dict[str, Any]]:
     scored: list[tuple[int, Page, list[str]]] = []
     for page in pages:
-        if page.type not in {"entity", "topic"}:
+        if page.type not in {"entity", "event", "statement", "topic"}:
             continue
         meta, _ = frontmatter.read_document(page.path)
         prior_sources = [src for src in page.sources if src not in focus_set]

@@ -19,3 +19,7 @@ class NotInitializedError(SecondMemoryError):
 
 class DirtyWorktreeError(SecondMemoryError):
     code = "dirty_worktree"
+
+
+class StaleSessionError(SecondMemoryError):
+    code = "stale_session"

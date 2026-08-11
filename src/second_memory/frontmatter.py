@@ -13,12 +13,10 @@ def _parse_value(value: str) -> Any:
         return value == "true"
     if value in {"null", "None"}:
         return None
-    if value.startswith("[") or value.startswith('"'):
-        try:
-            return json.loads(value)
-        except json.JSONDecodeError:
-            return value.strip('"')
-    return value
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return value.strip('"')
 
 
 def parse_mapping(text: str) -> dict[str, Any]:
@@ -36,8 +34,8 @@ def parse_mapping(text: str) -> dict[str, Any]:
 def dump_mapping(meta: dict[str, Any]) -> str:
     lines: list[str] = []
     for key, value in meta.items():
-        if isinstance(value, list):
-            rendered = json.dumps(value, ensure_ascii=False)
+        if isinstance(value, (list, dict)):
+            rendered = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         elif isinstance(value, bool):
             rendered = "true" if value else "false"
         elif value is None:

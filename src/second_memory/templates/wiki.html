@@ -1,326 +1,285 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>第二记忆 · Wiki</title>
 <style>
-  /* ---- ink & dusk : a quiet reading room, not a dashboard ---------------- */
   :root {
-    --paper:      #f5f6f7;
-    --paper-sink: #eceef0;
-    --ink:        #23232a;
-    --ink-soft:   #55555f;
-    --ink-faint:  #8a8a95;
-    --line:       #dcdee1;
-    --line-soft:  #e6e8ea;
-    --accent:     #474d73;
-    --accent-2:   #6b7099;
-    --dot-person:  #7d6f9c;
-    --dot-project: #4f7a86;
-    --dot-concept: #6b7099;
-    --dot-emotion: #a8737f;
-    --serif: "Songti SC", "STSong", "SimSun", "Noto Serif CJK SC", "Source Han Serif SC", Georgia, serif;
-    --sans:  -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
-    --mono:  "SF Mono", "JetBrains Mono", "Menlo", "Consolas", ui-monospace, monospace;
-    --measure: 42rem;
+    --bg: #f4f1ea;
+    --surface: rgba(255, 255, 255, .72);
+    --surface-solid: #fbfaf7;
+    --ink: #1d2523;
+    --muted: #68716d;
+    --faint: #949b97;
+    --line: rgba(29, 37, 35, .12);
+    --accent: #1f6d5a;
+    --accent-soft: #dcebe5;
+    --warn: #9c5c23;
+    --warn-soft: #f3e5d4;
+    --danger: #9a4545;
+    --danger-soft: #f2dddd;
+    --entity: #397d73;
+    --event: #a36731;
+    --statement: #5e6090;
+    --topic: #925b74;
+    --raw: #737b78;
+    --shadow: 0 18px 60px rgba(39, 45, 41, .08);
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    --serif: "Songti SC", "STSong", "Noto Serif CJK SC", Georgia, serif;
+    --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --paper:      #16171b;
-      --paper-sink: #1d1e23;
-      --ink:        #e5e5ea;
-      --ink-soft:   #a9a9b4;
-      --ink-faint:  #74747f;
-      --line:       #2c2d33;
-      --line-soft:  #24252a;
-      --accent:     #9aa0cf;
-      --accent-2:   #7f85b3;
-      --dot-person:  #b0a2d0;
-      --dot-project: #7fb0bd;
-      --dot-concept: #9aa0cf;
-      --dot-emotion: #d3a0ab;
+      --bg: #141816;
+      --surface: rgba(28, 34, 31, .82);
+      --surface-solid: #1c221f;
+      --ink: #e5e9e6;
+      --muted: #abb3af;
+      --faint: #78827d;
+      --line: rgba(229, 233, 230, .11);
+      --accent: #76bfa9;
+      --accent-soft: #203b33;
+      --warn: #e0a365;
+      --warn-soft: #42301f;
+      --danger: #df8888;
+      --danger-soft: #442626;
+      --shadow: 0 18px 60px rgba(0, 0, 0, .22);
     }
   }
-
   * { box-sizing: border-box; }
-  html { -webkit-text-size-adjust: 100%; }
+  html { scroll-behavior: smooth; }
   body {
     margin: 0;
-    background: var(--paper);
     color: var(--ink);
-    font-family: var(--sans);
-    font-size: 17px;
-    line-height: 1.7;
+    background:
+      radial-gradient(circle at 14% -10%, color-mix(in srgb, var(--accent) 11%, transparent), transparent 34rem),
+      var(--bg);
+    font: 16px/1.65 var(--sans);
     -webkit-font-smoothing: antialiased;
-    text-rendering: optimizeLegibility;
   }
   a { color: inherit; text-decoration: none; }
-
-  /* ---- masthead ---------------------------------------------------------- */
-  header.masthead {
+  button, input { font: inherit; }
+  button { color: inherit; }
+  .shell { width: min(1180px, calc(100% - 32px)); margin: 0 auto; }
+  .topbar {
     position: sticky; top: 0; z-index: 20;
-    background: color-mix(in srgb, var(--paper) 88%, transparent);
-    backdrop-filter: saturate(1.1) blur(10px);
     border-bottom: 1px solid var(--line);
+    background: color-mix(in srgb, var(--bg) 86%, transparent);
+    backdrop-filter: blur(18px) saturate(1.15);
   }
-  .masthead-inner {
-    max-width: var(--measure);
-    margin: 0 auto;
-    padding: 0 1.4rem;
-    display: flex; align-items: baseline; gap: 1.2rem;
-    min-height: 60px;
+  .topbar .shell { min-height: 70px; display: flex; align-items: center; gap: 22px; }
+  .brand { display: flex; align-items: center; gap: 11px; white-space: nowrap; }
+  .brand-mark {
+    width: 34px; height: 34px; display: grid; place-items: center;
+    border: 1px solid var(--line); border-radius: 50%;
+    color: var(--accent); background: var(--surface);
+    font: 600 17px/1 var(--serif);
   }
-  .brand {
-    font-family: var(--serif);
-    font-size: 1.15rem;
-    letter-spacing: 0.02em;
-    cursor: pointer;
-    white-space: nowrap;
+  .brand-title { font: 600 17px/1.1 var(--serif); letter-spacing: .06em; }
+  .brand-sub { color: var(--faint); font: 9px/1.2 var(--mono); letter-spacing: .18em; text-transform: uppercase; margin-top: 4px; }
+  nav { display: flex; align-self: stretch; margin-left: auto; }
+  nav a {
+    position: relative; display: grid; place-items: center; padding: 0 14px;
+    color: var(--muted); font-size: 14px;
   }
-  .brand small {
-    font-family: var(--mono);
-    font-size: 0.62rem;
-    letter-spacing: 0.22em;
-    text-transform: uppercase;
-    color: var(--ink-faint);
-    margin-left: 0.55rem;
-  }
-  nav.tabs { margin-left: auto; display: flex; gap: 0.2rem; }
-  nav.tabs button {
-    font-family: var(--mono);
-    font-size: 0.72rem;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: var(--ink-faint);
-    background: none; border: 0;
-    padding: 0.5rem 0.35rem;
-    cursor: pointer;
-    position: relative;
-    transition: color 0.18s ease;
-  }
-  nav.tabs button:hover { color: var(--ink-soft); }
-  nav.tabs button[aria-current="true"] { color: var(--ink); }
-  nav.tabs button[aria-current="true"]::after {
-    content: ""; position: absolute; left: 0.35rem; right: 0.35rem; bottom: -1px;
+  nav a:hover, nav a[aria-current="page"] { color: var(--ink); }
+  nav a[aria-current="page"]::after {
+    content: ""; position: absolute; left: 14px; right: 14px; bottom: -1px;
     height: 2px; background: var(--accent);
   }
-
-  main {
-    max-width: var(--measure);
-    margin: 0 auto;
-    padding: 2.6rem 1.4rem 6rem;
-    min-height: 60vh;
+  .health-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 5px var(--accent-soft); margin-left: 8px; }
+  .health-dot.warn { background: var(--warn); box-shadow: 0 0 0 5px var(--warn-soft); }
+  main { min-height: calc(100vh - 150px); padding: 44px 0 80px; }
+  .view { opacity: 1; }
+  .eyebrow { margin: 0 0 8px; color: var(--accent); font: 11px/1.2 var(--mono); letter-spacing: .16em; text-transform: uppercase; }
+  h1, h2, h3, p { margin-top: 0; }
+  h1 { margin-bottom: 12px; font: 600 clamp(32px, 5vw, 54px)/1.12 var(--serif); letter-spacing: -.02em; }
+  h2 { font: 600 23px/1.3 var(--serif); }
+  h3 { font-size: 15px; }
+  .lede { max-width: 720px; color: var(--muted); font: 18px/1.75 var(--serif); }
+  .hero { margin-bottom: 36px; }
+  .hero-row { display: flex; justify-content: space-between; align-items: end; gap: 24px; }
+  .schema-pill, .badge, .state-pill {
+    display: inline-flex; align-items: center; gap: 7px;
+    border: 1px solid var(--line); border-radius: 999px;
+    padding: 5px 10px; color: var(--muted); background: var(--surface);
+    font: 11px/1.2 var(--mono);
   }
-  .view { animation: rise 0.34s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
-  @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-
-  /* ---- view headers ------------------------------------------------------ */
-  .view-eyebrow {
-    font-family: var(--mono);
-    font-size: 0.68rem; letter-spacing: 0.24em; text-transform: uppercase;
-    color: var(--ink-faint);
-    margin: 0 0 0.5rem;
+  .metrics { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; margin: 28px 0 42px; }
+  .metric { border-top: 2px solid var(--line); padding: 14px 3px 8px; }
+  .metric.entity { border-color: var(--entity); }
+  .metric.event { border-color: var(--event); }
+  .metric.statement { border-color: var(--statement); }
+  .metric.topic { border-color: var(--topic); }
+  .metric strong { display: block; font: 600 28px/1.15 var(--serif); }
+  .metric span { color: var(--faint); font: 11px/1.2 var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+  .grid-2 { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(280px, .75fr); gap: 28px; }
+  .panel {
+    border: 1px solid var(--line); border-radius: 16px; background: var(--surface);
+    box-shadow: var(--shadow); overflow: hidden;
   }
-  .view-title {
-    font-family: var(--serif);
-    font-weight: 600;
-    font-size: 2rem;
-    line-height: 1.2;
-    margin: 0 0 2.2rem;
-    letter-spacing: 0.01em;
+  .panel-head { display: flex; justify-content: space-between; gap: 16px; align-items: baseline; padding: 18px 20px; border-bottom: 1px solid var(--line); }
+  .panel-head h2 { margin: 0; font-size: 19px; }
+  .panel-head span { color: var(--faint); font: 11px/1.2 var(--mono); }
+  .panel-body { padding: 18px 20px; }
+  .health-list { display: grid; gap: 1px; background: var(--line); }
+  .health-row { display: grid; grid-template-columns: 1fr auto; gap: 20px; padding: 12px 16px; background: var(--surface-solid); }
+  .health-row small { display: block; color: var(--faint); }
+  .health-value { align-self: center; color: var(--accent); font: 12px/1.4 var(--mono); text-align: right; }
+  .health-value.warn { color: var(--warn); }
+  .health-value.danger { color: var(--danger); }
+  .section { margin-top: 44px; }
+  .section-title { display: flex; justify-content: space-between; gap: 20px; align-items: end; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+  .section-title h2 { margin: 0; }
+  .section-title span { color: var(--faint); font: 11px/1.2 var(--mono); }
+  .searchbar { display: flex; gap: 12px; margin: 22px 0 20px; }
+  .searchbar input {
+    width: 100%; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px;
+    color: var(--ink); background: var(--surface); outline: none;
   }
-
-  /* ---- index rows (book-like, hairline dividers not cards) --------------- */
-  .kind-group { margin-bottom: 2.4rem; }
-  .kind-label {
-    display: flex; align-items: center; gap: 0.55rem;
-    font-family: var(--mono);
-    font-size: 0.68rem; letter-spacing: 0.2em; text-transform: uppercase;
-    color: var(--ink-faint);
-    padding-bottom: 0.7rem;
-    border-bottom: 1px solid var(--line);
-    margin-bottom: 0.3rem;
+  .searchbar input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+  .filters button {
+    border: 1px solid var(--line); border-radius: 999px; padding: 7px 12px;
+    color: var(--muted); background: transparent; cursor: pointer; font-size: 13px;
   }
-  .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--accent); }
-  .dot.person  { background: var(--dot-person); }
-  .dot.project { background: var(--dot-project); }
-  .dot.concept { background: var(--dot-concept); }
-  .dot.emotion { background: var(--dot-emotion); }
-
-  .row {
-    display: block;
-    padding: 1rem 0.2rem;
-    border-bottom: 1px solid var(--line-soft);
-    cursor: pointer;
-    transition: padding-left 0.2s ease, background 0.2s ease;
+  .filters button.active { color: var(--surface-solid); border-color: var(--accent); background: var(--accent); }
+  .list { border-top: 1px solid var(--line); }
+  .list-row {
+    display: grid; grid-template-columns: 110px minmax(0, 1fr) auto; gap: 20px;
+    align-items: start; padding: 19px 4px; border-bottom: 1px solid var(--line);
+    transition: padding .16s ease, background .16s ease;
   }
-  .row:hover { padding-left: 0.7rem; background: var(--paper-sink); }
-  .row-title {
-    font-family: var(--serif);
-    font-size: 1.16rem;
-    font-weight: 600;
-    margin-bottom: 0.2rem;
-  }
-  .row-summary { color: var(--ink-soft); font-size: 0.95rem; line-height: 1.6; }
-  .row-meta {
-    font-family: var(--mono);
-    font-size: 0.66rem; letter-spacing: 0.08em;
-    color: var(--ink-faint);
-    margin-top: 0.4rem;
-  }
-
-  /* ---- timeline : the reading spine (signature) -------------------------- */
-  .spine { position: relative; padding-left: 1.7rem; }
-  .spine::before {
-    content: ""; position: absolute; left: 5px; top: 6px; bottom: 6px;
-    width: 1px; background: var(--line);
-  }
-  .day { position: relative; margin-bottom: 2.3rem; }
-  .day-date {
-    font-family: var(--mono);
-    font-size: 0.74rem; letter-spacing: 0.12em;
-    color: var(--ink-soft);
-    margin-bottom: 0.9rem;
-  }
-  .day-date .wk { color: var(--ink-faint); margin-left: 0.5rem; }
-  .day::before {
-    content: ""; position: absolute; left: -1.7rem; top: 5px;
-    width: 11px; height: 11px; border-radius: 50%;
-    background: var(--paper); border: 2px solid var(--accent);
-  }
-  .month-rule {
-    font-family: var(--mono);
-    font-size: 0.66rem; letter-spacing: 0.2em; text-transform: uppercase;
-    color: var(--ink-faint);
-    margin: 0 0 1.4rem -1.7rem;
-    padding-bottom: 0.5rem; border-bottom: 1px solid var(--line);
-  }
-  .entry { margin-bottom: 0.85rem; }
-  .entry-time {
-    font-family: var(--mono); font-size: 0.7rem; color: var(--accent);
-    margin-right: 0.5rem;
-  }
-  .entry-text { font-family: var(--serif); font-size: 1.04rem; line-height: 1.65; }
-  .threads { margin-top: 0.4rem; display: flex; flex-wrap: wrap; gap: 0.35rem; }
-
-  /* ---- chips ------------------------------------------------------------- */
+  .list-row:hover { padding-left: 12px; padding-right: 12px; background: var(--surface); }
+  .type-label { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font: 11px/1.4 var(--mono); text-transform: uppercase; }
+  .type-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+  .type-dot.entity { background: var(--entity); }
+  .type-dot.event { background: var(--event); }
+  .type-dot.statement { background: var(--statement); }
+  .type-dot.topic { background: var(--topic); }
+  .type-dot.raw { background: var(--raw); }
+  .row-title { margin-bottom: 4px; font: 600 18px/1.35 var(--serif); }
+  .row-summary { max-width: 720px; color: var(--muted); font-size: 14px; }
+  .row-meta { color: var(--faint); font: 11px/1.45 var(--mono); text-align: right; white-space: nowrap; }
+  .spine { position: relative; margin-top: 26px; padding-left: 28px; }
+  .spine::before { content: ""; position: absolute; left: 6px; top: 7px; bottom: 0; width: 1px; background: var(--line); }
+  .day { position: relative; margin-bottom: 36px; }
+  .day::before { content: ""; position: absolute; left: -27px; top: 5px; width: 11px; height: 11px; border: 2px solid var(--accent); border-radius: 50%; background: var(--bg); }
+  .day-date { margin-bottom: 12px; color: var(--muted); font: 12px/1.3 var(--mono); letter-spacing: .08em; }
+  .timeline-entry { padding: 13px 0; border-bottom: 1px solid var(--line); }
+  .entry-text { font: 17px/1.6 var(--serif); }
+  .entry-time { margin-right: 8px; color: var(--accent); font: 11px/1.4 var(--mono); }
+  .chips { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 8px; }
   .chip {
-    display: inline-flex; align-items: center; gap: 0.4rem;
-    font-family: var(--sans); font-size: 0.8rem;
-    color: var(--ink-soft);
-    background: var(--paper-sink);
-    border: 1px solid var(--line);
-    border-radius: 999px;
-    padding: 0.18rem 0.7rem;
-    cursor: pointer;
-    transition: border-color 0.16s ease, color 0.16s ease;
+    display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
+    border: 1px solid var(--line); border-radius: 999px; padding: 4px 9px;
+    color: var(--muted); background: var(--surface); font-size: 12px;
   }
-  .chip:hover { border-color: var(--accent); color: var(--ink); }
-  .chip .dot { width: 6px; height: 6px; }
-  .chip.raw { border-radius: 6px; font-family: var(--mono); font-size: 0.72rem; }
-
-  /* ---- detail ------------------------------------------------------------ */
-  .back {
-    font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.1em;
-    color: var(--ink-faint); cursor: pointer; display: inline-block; margin-bottom: 1.6rem;
-    transition: color 0.16s ease;
-  }
+  a.chip:hover { color: var(--accent); border-color: var(--accent); }
+  .back { display: inline-flex; margin-bottom: 22px; color: var(--muted); font: 12px/1.3 var(--mono); }
   .back:hover { color: var(--accent); }
-  .detail-kind {
-    font-family: var(--mono);
-    font-size: 0.68rem; letter-spacing: 0.22em; text-transform: uppercase;
-    color: var(--ink-faint);
-    display: flex; align-items: center; gap: 0.5rem;
-    margin-bottom: 0.7rem;
+  .detail-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 22px; align-items: start; padding-bottom: 26px; border-bottom: 1px solid var(--line); }
+  .detail-head h1 { font-size: clamp(34px, 5vw, 58px); }
+  .detail-summary { max-width: 760px; color: var(--muted); font: 19px/1.7 var(--serif); }
+  .detail-id { color: var(--faint); font: 10px/1.5 var(--mono); word-break: break-all; text-align: right; }
+  .fact-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 22px; }
+  .fact { min-height: 94px; border: 1px solid var(--line); border-radius: 12px; padding: 14px; background: var(--surface); }
+  .fact-label { margin-bottom: 7px; color: var(--faint); font: 10px/1.3 var(--mono); letter-spacing: .1em; text-transform: uppercase; }
+  .fact-value { font: 16px/1.55 var(--serif); }
+  .state-box { border-left: 3px solid var(--statement); padding: 4px 0 4px 18px; font: 20px/1.65 var(--serif); }
+  .topic-question { border-left-color: var(--topic); }
+  .facet-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+  .facet-card { border: 1px solid var(--line); border-radius: 12px; padding: 17px; background: var(--surface); }
+  .facet-card h3 { margin: 0 0 7px; font: 600 19px/1.4 var(--serif); }
+  .facet-card p { margin: 0 0 13px; color: var(--muted); font-size: 14px; }
+  .facet-member { padding: 10px 0; border-top: 1px solid var(--line); }
+  .facet-reason { margin-top: 5px; color: var(--muted); font-size: 12px; }
+  .facet-excerpt { margin-top: 6px; color: var(--faint); font: 11px/1.5 var(--mono); }
+  .history { position: relative; display: grid; gap: 0; padding-left: 22px; }
+  .history::before { content: ""; position: absolute; left: 5px; top: 7px; bottom: 8px; width: 1px; background: var(--line); }
+  .history-item { position: relative; padding: 0 0 20px 10px; }
+  .history-item::before { content: ""; position: absolute; left: -21px; top: 6px; width: 7px; height: 7px; border-radius: 50%; background: var(--statement); }
+  .history-date { color: var(--faint); font: 11px/1.4 var(--mono); }
+  .history-state { margin-top: 3px; font: 16px/1.6 var(--serif); }
+  .relation-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .relation-list { border-top: 1px solid var(--line); }
+  .relation-row { padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .relation-kind { color: var(--accent); font: 10px/1.4 var(--mono); }
+  .relation-note { color: var(--muted); font-size: 13px; }
+  .annotation-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .annotation { border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: var(--surface); }
+  .annotation dt { color: var(--faint); font: 10px/1.4 var(--mono); }
+  .annotation dd { margin: 5px 0 0; word-break: break-word; }
+  .prose { max-width: 760px; font: 17px/1.85 var(--serif); }
+  .prose h1 { font-size: 30px; }
+  .prose h2 { margin: 30px 0 10px; font-size: 21px; }
+  .prose h3 { margin: 24px 0 8px; font-size: 17px; }
+  .prose .detail-section-label { margin: 24px 0 8px; color: var(--accent); font: 11px/1.4 var(--mono); letter-spacing: .08em; }
+  .prose p { margin-bottom: 16px; }
+  .prose code { border-radius: 4px; padding: 2px 5px; background: var(--accent-soft); font: .87em/1.4 var(--mono); }
+  .prose a { color: var(--accent); border-bottom: 1px solid currentColor; }
+  .candidate { padding: 14px 0; border-bottom: 1px solid var(--line); }
+  .candidate pre, details pre { overflow: auto; white-space: pre-wrap; color: var(--muted); font: 11px/1.6 var(--mono); }
+  .empty { padding: 42px 0; color: var(--faint); text-align: center; font: 18px/1.6 var(--serif); }
+  footer { border-top: 1px solid var(--line); padding: 22px 0 36px; color: var(--faint); font: 10px/1.5 var(--mono); }
+  footer .shell { display: flex; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+  @media (max-width: 860px) {
+    .grid-2, .relation-grid, .facet-grid { grid-template-columns: 1fr; }
+    .metrics { grid-template-columns: repeat(3, 1fr); }
+    .fact-grid, .annotation-grid { grid-template-columns: 1fr 1fr; }
   }
-  .detail-title {
-    font-family: var(--serif); font-weight: 600;
-    font-size: 2.1rem; line-height: 1.22; margin: 0 0 0.8rem;
-    letter-spacing: 0.01em;
+  @media (max-width: 620px) {
+    .shell { width: min(100% - 22px, 1180px); }
+    .topbar .shell { min-height: 62px; gap: 8px; }
+    .brand-sub, .health-dot { display: none; }
+    nav a { padding: 0 7px; font-size: 12px; }
+    nav a[aria-current="page"]::after { left: 7px; right: 7px; }
+    main { padding-top: 30px; }
+    .hero-row, .detail-head { display: block; }
+    .schema-pill { margin-top: 15px; }
+    .metrics { grid-template-columns: repeat(2, 1fr); }
+    .list-row { grid-template-columns: 86px minmax(0, 1fr); }
+    .row-meta { display: none; }
+    .fact-grid, .annotation-grid { grid-template-columns: 1fr; }
+    .detail-id { margin-top: 14px; text-align: left; }
   }
-  .detail-aliases { color: var(--ink-faint); font-size: 0.9rem; margin-bottom: 1.4rem; }
-  .lede {
-    font-family: var(--serif);
-    font-size: 1.16rem; line-height: 1.6; color: var(--ink-soft);
-    border-left: 2px solid var(--accent);
-    padding: 0.1rem 0 0.1rem 1.1rem;
-    margin: 0 0 2.2rem;
-  }
-  .prose { font-family: var(--serif); }
-  .prose h2 { font-size: 1.02rem; font-family: var(--sans); font-weight: 700; letter-spacing: 0.01em; color: var(--ink); margin: 2rem 0 0.7rem; }
-  .prose h3 { font-size: 0.96rem; font-family: var(--sans); font-weight: 600; color: var(--ink-soft); margin: 1.5rem 0 0.5rem; }
-  .prose h4 { font-size: 0.9rem; font-family: var(--sans); font-weight: 600; color: var(--ink-soft); margin: 1.2rem 0 0.4rem; }
-  .prose p { margin: 0 0 1rem; }
-  .prose ul, .prose ol { margin: 0 0 1rem; padding-left: 1.3rem; }
-  .prose li { margin-bottom: 0.4rem; }
-  .prose code { font-family: var(--mono); font-size: 0.85em; background: var(--paper-sink); padding: 0.1em 0.4em; border-radius: 4px; }
-  .prose a { color: var(--accent); border-bottom: 1px solid var(--line); }
-  .prose strong { font-weight: 700; }
-
-  .section { margin-top: 2.6rem; }
-  .section-label {
-    font-family: var(--mono);
-    font-size: 0.66rem; letter-spacing: 0.2em; text-transform: uppercase;
-    color: var(--ink-faint);
-    padding-bottom: 0.6rem; border-bottom: 1px solid var(--line);
-    margin-bottom: 1rem;
-  }
-  .chip-wrap { display: flex; flex-wrap: wrap; gap: 0.5rem; }
-
-  .related-item { display: block; padding: 0.7rem 0; border-bottom: 1px solid var(--line-soft); cursor: pointer; transition: padding-left 0.18s ease; }
-  .related-item:hover { padding-left: 0.5rem; }
-  .related-head { display: flex; align-items: center; gap: 0.5rem; font-family: var(--serif); font-size: 1.02rem; font-weight: 600; }
-  .related-summary { color: var(--ink-faint); font-size: 0.86rem; margin-top: 0.15rem; }
-
-  .mini-time { display: flex; gap: 0.7rem; padding: 0.45rem 0; border-bottom: 1px solid var(--line-soft); font-size: 0.92rem; cursor: pointer; }
-  .mini-time:hover { color: var(--accent); }
-  .mini-time .d { font-family: var(--mono); font-size: 0.72rem; color: var(--ink-faint); white-space: nowrap; padding-top: 0.15rem; }
-
-  .raw-body { font-family: var(--serif); font-size: 1.06rem; line-height: 1.8; }
-  .raw-body p { margin: 0 0 1.15rem; }
-
-  .empty { color: var(--ink-faint); font-family: var(--serif); font-size: 1.05rem; padding: 3rem 0; text-align: center; }
-
-  footer {
-    max-width: var(--measure); margin: 0 auto; padding: 2rem 1.4rem 3rem;
-    border-top: 1px solid var(--line);
-    font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.08em;
-    color: var(--ink-faint);
-    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;
-  }
-
-  @media (max-width: 640px) {
-    body { font-size: 16px; }
-    .view-title { font-size: 1.7rem; }
-    .detail-title { font-size: 1.7rem; }
-    .masthead-inner { gap: 0.6rem; }
-    .brand small { display: none; }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .view { animation: none; }
-    * { transition: none !important; }
-  }
-  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } .view { animation: none; } }
 </style>
 </head>
 <body>
-<header class="masthead">
-  <div class="masthead-inner">
-    <div class="brand" id="brand" role="link" tabindex="0">第二记忆<small>Second Memory</small></div>
-    <nav class="tabs" id="tabs" aria-label="视图">
-      <button data-route="timeline">时间线</button>
-      <button data-route="entities">实体</button>
-      <button data-route="topics">主题</button>
+<header class="topbar">
+  <div class="shell">
+    <a class="brand" href="#/topics">
+      <span class="brand-mark">忆</span>
+      <span><span class="brand-title">第二记忆</span><span class="brand-sub">Second Memory · v2</span></span>
+    </a>
+    <nav aria-label="Wiki 视图">
+      <a href="#/topics" data-tab="topics">主题</a>
+      <a href="#/overview" data-tab="overview">概览</a>
+      <a href="#/timeline" data-tab="timeline">时间线</a>
+      <a href="#/nodes" data-tab="nodes">图谱</a>
+      <a href="#/raws" data-tab="raws">原文</a>
     </nav>
+    <span class="health-dot" id="health-dot" title="知识库状态"></span>
   </div>
 </header>
 
-<main id="app"></main>
+<main class="shell" id="app">
+<!-- WIKI_STATIC_START -->
+<section class="view">
+  <div class="hero">
+    <p class="eyebrow">Template Source</p>
+    <h1>此文件尚未注入知识库数据。</h1>
+    <p class="lede">这是 Wiki HTML 源码模板，不是可交付页面。请运行 <code>second-memory wiki --json</code>，然后打开命令返回的 <code>data.output</code> 文件。</p>
+  </div>
+</section>
+<!-- WIKI_STATIC_END -->
+</main>
 
 <footer>
-  <span id="foot-counts"></span>
-  <span id="foot-gen"></span>
+  <div class="shell"><span id="footer-counts"></span><span id="footer-generated"></span></div>
 </footer>
 
 <script type="application/json" id="wiki-data">__WIKI_DATA__</script>
@@ -329,250 +288,392 @@
   "use strict";
   var DATA = JSON.parse(document.getElementById("wiki-data").textContent);
   var app = document.getElementById("app");
-
-  var KIND_LABEL = { person: "人物", project: "项目", concept: "概念", emotion: "情绪", topic: "主题", unknown: "" };
-  var WEEKDAY = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
-
   var byId = {};
-  DATA.entities.forEach(function (e) { byId[e.id] = e; });
-  DATA.topics.forEach(function (t) { byId[t.id] = t; });
+  DATA.nodes.forEach(function (node) { byId[node.id] = node; });
   var rawById = DATA.raws || {};
+  var TYPE_LABEL = { entity: "实体", event: "事件", statement: "洞察", topic: "主题", raw: "原文", unknown: "未知" };
+  var STATUS_LABEL = { planned: "计划中", ongoing: "进行中", occurred: "已发生", cancelled: "已取消", superseded: "已取代" };
+  var EVENT_BASIS_LABEL = { appointment: "会面／咨询", scheduled_commitment: "明确排期", incident: "具体事件", milestone: "里程碑", transaction: "交易", material_change: "重要变化" };
+  var DETAIL_LABELS = ["对象与关系：", "历史与现状：", "发生与背景：", "结果与关联：", "洞察与依据：", "演进与影响：", "组织视角：", "脉络与边界："];
+  var filterType = "all";
+  var nodeQuery = "";
+  var rawQuery = "";
 
-  function esc(s) {
-    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
-      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+  function esc(value) {
+    return String(value == null ? "" : value).replace(/[&<>"']/g, function (char) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char];
     });
   }
-  function el(html) { var d = document.createElement("div"); d.innerHTML = html.trim(); return d.firstChild; }
-  function weekday(dateStr) {
-    var p = dateStr.split("-");
-    if (p.length < 3) return "";
-    var d = new Date(Date.UTC(+p[0], +p[1] - 1, +p[2]));
-    return WEEKDAY[d.getUTCDay()];
+  function element(html) { var box = document.createElement("div"); box.innerHTML = html.trim(); return box.firstChild; }
+  function replace(view) { app.replaceChildren(view); window.scrollTo(0, 0); }
+  function valueText(value) {
+    if (value == null || value === "") return "—";
+    if (typeof value === "object") return JSON.stringify(value, null, 2);
+    return String(value);
   }
-  function go(route) { location.hash = "#/" + route; }
-
-  function dotClass(kind) {
-    return ["person", "project", "concept", "emotion"].indexOf(kind) >= 0 ? kind : "";
+  function typeLabel(type) { return TYPE_LABEL[type] || type || "未知"; }
+  function routeTo(ref) { return ref.type === "raw" ? "raw/" + ref.id : "node/" + ref.id; }
+  function refById(id, fallbackType) {
+    if (byId[id]) return byId[id];
+    if (rawById[id]) return { id: id, title: rawById[id].title, type: "raw" };
+    return { id: id, title: id, type: fallbackType || "unknown" };
+  }
+  function chip(ref) {
+    if (!ref || ref.type === "unknown") return '<span class="chip"><span class="type-dot"></span>' + esc(ref && ref.title || "未知") + "</span>";
+    return '<a class="chip" href="#/' + esc(routeTo(ref)) + '"><span class="type-dot ' + esc(ref.type) + '"></span>' + esc(ref.title) + "</a>";
+  }
+  function typeTag(type, suffix) {
+    return '<span class="type-label"><span class="type-dot ' + esc(type) + '"></span>' + esc(typeLabel(type)) + (suffix ? " · " + esc(suffix) : "") + "</span>";
+  }
+  function section(title, count) {
+    return '<div class="section-title"><h2>' + esc(title) + "</h2>" + (count == null ? "" : "<span>" + esc(count) + "</span>") + "</div>";
+  }
+  function detailHtml(detail) {
+    return String(detail || "").split(/\n\s*\n/).filter(function (paragraph) { return paragraph.trim(); }).map(function (paragraph) {
+      var text = paragraph.trim();
+      var label = DETAIL_LABELS.find(function (candidate) { return text.indexOf(candidate) === 0; });
+      if (!label) return '<p>' + esc(text).replace(/\n/g, "<br>") + '</p>';
+      var body = text.slice(label.length).trim();
+      return '<h3 class="detail-section-label">' + esc(label.slice(0, -1)) + '</h3>' + (body ? '<p>' + esc(body).replace(/\n/g, "<br>") + '</p>' : "");
+    }).join("");
+  }
+  function isUnhealthy() {
+    var health = DATA.health;
+    var quality = health.semantic_quality || { missing_detail: [], weak_detail: [], missing_evidence: [], weak_evidence: [], low_confidence_events: [], weak_event_contract: [] };
+    return health.version_drift || health.manifest_drift.length || health.pending || health.rebuild.active || health.transaction.recovery_required || quality.missing_detail.length || quality.weak_detail.length || quality.missing_evidence.length || quality.weak_evidence.length || quality.low_confidence_events.length || quality.weak_event_contract.length;
+  }
+  function topicNodes() { return DATA.nodes.filter(function (node) { return node.type === "topic"; }); }
+  function topicListRow(node) {
+    var reading = node.attrs && node.attrs.topic_reading || {};
+    var memberCount = (node.outgoing || []).filter(function (edge) { return edge.type === "contains"; }).length;
+    return '<a class="list-row" href="#/node/' + esc(node.id) + '"><div>' + typeTag("topic") + '</div><div><div class="row-title">' + esc(node.title) + '</div><div class="row-summary">' + esc(reading.core_understanding || node.summary) + '</div></div><div class="row-meta">' + memberCount + " 成员<br>" + node.sources.length + " 来源</div></a>";
   }
 
-  // ---- index views ------------------------------------------------------- //
-  function renderIndex(kind) {
-    var isEntity = kind === "entities";
-    var items = isEntity ? DATA.entities : DATA.topics;
-    var view = el('<div class="view"></div>');
-    view.appendChild(el('<p class="view-eyebrow">' + (isEntity ? "Entities · " + items.length : "Topics · " + items.length) + "</p>"));
-    view.appendChild(el('<h1 class="view-title">' + (isEntity ? "实体" : "主题") + "</h1>"));
+  function renderOverview() {
+    var c = DATA.counts;
+    var h = DATA.health;
+    var q = h.semantic_quality || { missing_detail: [], weak_detail: [], missing_evidence: [], weak_evidence: [], low_confidence_events: [], weak_event_contract: [] };
+    var view = element('<div class="view"></div>');
+    view.innerHTML =
+      '<section class="hero"><div class="hero-row"><div><p class="eyebrow">Personal Knowledge Graph</p><h1>你的知识，正在形成结构。</h1>' +
+      '<p class="lede">从不可变原文到实体、事件、洞察与主题。这里呈现当前图谱、历史演化以及每条结论可回溯的来源。</p></div>' +
+      '<span class="schema-pill">manifest schema ' + esc(h.manifest_schema) + " · compiled " + esc(h.compiled_kb_version || "—") + " · rebuild " + esc(h.rebuild.phase) + " " + esc(h.rebuild.processed) + "/" + esc(h.rebuild.total) + "</span></div></section>" +
+      '<div class="metrics">' + metric("entity", c.entity, "实体") + metric("event", c.event, "事件") +
+      metric("statement", c.statement, "洞察") + metric("topic", c.topic, "主题") + metric("", c.edges, "关系") + metric("", c.raw, "原文") + "</div>";
 
-    if (!items.length) { view.appendChild(el('<p class="empty">还没有编译出' + (isEntity ? "实体" : "主题") + "页面。</p>")); app.replaceChildren(view); return; }
+    var overviewTopics = element('<section class="section"></section>');
+    var topics = topicNodes();
+    overviewTopics.innerHTML = section("主题优先阅读", topics.length) + '<div class="list">' + (topics.length ? topics.map(topicListRow).join("") : '<p class="empty">暂无稳定主题。</p>') + "</div>";
+    view.appendChild(overviewTopics);
 
-    if (isEntity) {
-      var order = ["person", "project", "concept", "emotion"];
-      var groups = {};
-      items.forEach(function (e) { var k = e.entity_kind || "concept"; (groups[k] = groups[k] || []).push(e); });
-      var keys = order.filter(function (k) { return groups[k]; }).concat(Object.keys(groups).filter(function (k) { return order.indexOf(k) < 0; }));
-      keys.forEach(function (k) {
-        var g = el('<section class="kind-group"></section>');
-        g.appendChild(el('<div class="kind-label"><span class="dot ' + dotClass(k) + '"></span>' + (KIND_LABEL[k] || esc(k)) + " · " + groups[k].length + "</div>"));
-        groups[k].forEach(function (e) { g.appendChild(indexRow(e)); });
-        view.appendChild(g);
+    var columns = element('<div class="grid-2"></div>');
+    var recent = element('<section class="panel"><div class="panel-head"><h2>最近的时间线</h2><span>' + c.timeline + ' 天</span></div><div class="panel-body"></div></section>');
+    var recentBody = recent.querySelector(".panel-body");
+    var latest = DATA.timeline.slice(0, 3);
+    if (!latest.length) recentBody.innerHTML = '<p class="empty">暂无时间线投影。</p>';
+    latest.forEach(function (day) {
+      recentBody.insertAdjacentHTML("beforeend", '<div class="day-date">' + esc(day.date) + "</div>");
+      day.entries.slice(0, 4).forEach(function (entry) {
+        recentBody.insertAdjacentHTML("beforeend", '<div class="timeline-entry"><div class="entry-text">' + esc(entry.text) + '</div><div class="chips">' + entry.refs.map(chip).join("") + "</div></div>");
       });
-    } else {
-      var sec = el('<section class="kind-group"></section>');
-      items.forEach(function (t) { sec.appendChild(indexRow(t)); });
-      view.appendChild(sec);
+    });
+    var health = element('<section class="panel"><div class="panel-head"><h2>编译健康</h2><span>' + (isUnhealthy() ? "需关注" : "正常") + '</span></div><div class="health-list"></div></section>');
+    var healthList = health.querySelector(".health-list");
+    healthList.innerHTML = healthRow("版本", "运行 " + h.kb_version, h.version_drift ? "编译 " + (h.compiled_kb_version || "未知") : "一致", h.version_drift ? "warn" : "") +
+      healthRow("重建", "raw replay progress", h.rebuild.phase + " · " + h.rebuild.processed + "/" + h.rebuild.total, h.rebuild.active ? "warn" : "") +
+      healthRow("待编译", "pending raw", h.pending, h.pending ? "warn" : "") +
+      healthRow("待整理", "Consolidation queue", h.consolidation_pending + (h.consolidation_due ? " · due" : ""), h.consolidation_due ? "warn" : "") +
+      healthRow("投影漂移", "manifest content hash", h.manifest_drift.length, h.manifest_drift.length ? "danger" : "") +
+      healthRow("事务", "transaction journal", h.transaction.state, h.transaction.recovery_required ? "danger" : "") +
+      healthRow("候选", "unresolved candidates", c.candidates, c.candidates ? "warn" : "") +
+      healthRow("节点内容", "weak detail / weak or missing evidence", (q.weak_detail.length + q.weak_evidence.length + q.missing_evidence.length), (q.weak_detail.length || q.weak_evidence.length || q.missing_evidence.length) ? "danger" : "") +
+      healthRow("事件发生性", "weak contract / low confidence", (q.weak_event_contract.length + q.low_confidence_events.length), (q.weak_event_contract.length || q.low_confidence_events.length) ? "danger" : "");
+    columns.append(recent, health);
+    view.appendChild(columns);
+
+    if (DATA.candidates.length || Object.keys(DATA.redirects).length || h.consolidation_memo) {
+      var governance = element('<section class="section"></section>');
+      governance.innerHTML = section("图谱治理", DATA.candidates.length + " 候选 · " + Object.keys(DATA.redirects).length + " redirect");
+      if (h.consolidation_memo) governance.insertAdjacentHTML("beforeend", '<div class="state-box">' + esc(h.consolidation_memo) + "</div>");
+      DATA.candidates.forEach(function (candidate, index) {
+        governance.insertAdjacentHTML("beforeend", '<div class="candidate"><strong>候选 ' + (index + 1) + "</strong>" + candidateLinks(candidate) + "<pre>" + esc(JSON.stringify(candidate, null, 2)) + "</pre></div>");
+      });
+      Object.keys(DATA.redirects).sort().forEach(function (from) {
+        var target = DATA.redirects[from];
+        governance.insertAdjacentHTML("beforeend", '<div class="relation-row"><span class="relation-kind">redirect</span><div><code>' + esc(from) + "</code> → " + (byId[target] ? chip({ id: target, title: byId[target].title, type: byId[target].type }) : "<code>" + esc(target) + "</code>") + "</div></div>");
+      });
+      view.appendChild(governance);
     }
-    app.replaceChildren(view);
+    replace(view);
   }
 
-  function indexRow(page) {
-    var row = el('<a class="row" role="link" tabindex="0"></a>');
-    row.appendChild(el('<div class="row-title">' + esc(page.title) + "</div>"));
-    if (page.summary) row.appendChild(el('<div class="row-summary">' + esc(page.summary) + "</div>"));
-    var bits = [];
-    if (page.related && page.related.length) bits.push(page.related.length + " 关联");
-    if (page.sources && page.sources.length) bits.push(page.sources.length + " 原料");
-    if (page.updated) bits.push("更新于 " + page.updated.slice(0, 10));
-    if (bits.length) row.appendChild(el('<div class="row-meta">' + bits.join("　·　") + "</div>"));
-    row.addEventListener("click", function () { go((page.type === "entity" ? "entity/" : "topic/") + page.id); });
-    row.addEventListener("keydown", function (ev) { if (ev.key === "Enter") { go((page.type === "entity" ? "entity/" : "topic/") + page.id); } });
-    return row;
+  function renderTopics() {
+    var topics = topicNodes();
+    var view = element('<div class="view"></div>');
+    view.innerHTML = '<div class="hero"><p class="eyebrow">Topic-first Reading</p><h1>主题阅读</h1><p class="lede">从稳定的组织问题进入知识库，先阅读跨记录的综合理解，再下钻至成员与原始证据。</p></div>' +
+      '<section class="section">' + section("全部主题", topics.length) + '<div class="list">' + (topics.length ? topics.map(topicListRow).join("") : '<p class="empty">暂无稳定主题。</p>') + "</div></section>";
+    replace(view);
   }
 
-  // ---- timeline ---------------------------------------------------------- //
+  function metric(type, number, label) {
+    return '<div class="metric ' + esc(type) + '"><strong>' + esc(number) + "</strong><span>" + esc(label) + "</span></div>";
+  }
+  function healthRow(title, subtitle, value, state) {
+    return '<div class="health-row"><div>' + esc(title) + "<small>" + esc(subtitle) + '</small></div><div class="health-value ' + esc(state) + '">' + esc(value) + "</div></div>";
+  }
+  function candidateLinks(candidate) {
+    var ids = candidate.node_ids || candidate.nodes || [];
+    if (!Array.isArray(ids)) return "";
+    return '<div class="chips">' + ids.map(function (id) {
+      var node = byId[id];
+      return node ? chip({ id: node.id, title: node.title, type: node.type }) : '<span class="chip">' + esc(id) + "</span>";
+    }).join("") + "</div>";
+  }
+
   function renderTimeline() {
-    var view = el('<div class="view"></div>');
-    view.appendChild(el('<p class="view-eyebrow">Timeline · ' + DATA.timeline.length + " 天</p>"));
-    view.appendChild(el('<h1 class="view-title">时间线</h1>'));
-
-    if (!DATA.timeline.length) { view.appendChild(el('<p class="empty">还没有时间线记录。</p>')); app.replaceChildren(view); return; }
-
-    var spine = el('<div class="spine"></div>');
-    var lastMonth = null;
+    var view = element('<div class="view"></div>');
+    view.innerHTML = '<div class="hero"><p class="eyebrow">Chronological Projection</p><h1>事件时间线</h1><p class="lede">只展示与用户相关、通过事实门的事件及日期调整。洞察的认知演进在洞察详情中独立呈现。</p></div>';
+    if (!DATA.timeline.length) {
+      view.insertAdjacentHTML("beforeend", '<p class="empty">暂无时间线投影。</p>');
+      return replace(view);
+    }
+    var spine = element('<div class="spine"></div>');
     DATA.timeline.forEach(function (day) {
-      var month = day.date.slice(0, 7);
-      if (month !== lastMonth) { spine.appendChild(el('<div class="month-rule">' + month + "</div>")); lastMonth = month; }
-      var dayEl = el('<div class="day"></div>');
-      dayEl.appendChild(el('<div class="day-date">' + esc(day.date) + '<span class="wk">' + weekday(day.date) + "</span></div>"));
+      var dayNode = element('<section class="day"><div class="day-date">' + esc(day.date) + " · " + day.entries.length + " 条</div></section>");
       day.entries.forEach(function (entry) {
-        var e = el('<div class="entry"></div>');
-        var txt = (entry.time ? '<span class="entry-time">' + esc(entry.time) + "</span>" : "") + '<span class="entry-text">' + esc(entry.text) + "</span>";
-        e.appendChild(el("<div>" + txt + "</div>"));
-        var hasRefs = entry.refs && entry.refs.length;
-        var hasRaws = entry.raws && entry.raws.length;
-        if (hasRefs || hasRaws) {
-          var threads = el('<div class="threads"></div>');
-          if (hasRefs) entry.refs.forEach(function (ref) { threads.appendChild(refChip(ref)); });
-          if (hasRaws) entry.raws.forEach(function (raw) { if (rawById[raw.id]) threads.appendChild(rawChip(raw.id)); });
-          e.appendChild(threads);
-        }
-        dayEl.appendChild(e);
+        dayNode.insertAdjacentHTML("beforeend", '<div class="timeline-entry"><div>' + (entry.time ? '<span class="entry-time">' + esc(entry.time) + "</span>" : "") + '<span class="entry-text">' + esc(entry.text) + '</span></div><div class="chips">' + entry.refs.map(chip).join("") + entry.raws.map(chip).join("") + "</div></div>");
       });
-      spine.appendChild(dayEl);
+      spine.appendChild(dayNode);
     });
     view.appendChild(spine);
-    app.replaceChildren(view);
+    replace(view);
   }
 
-  function refChip(ref) {
-    if (ref.type === "unknown") {
-      var span = el('<span class="chip" style="cursor:default;opacity:.7"><span class="dot"></span>' + esc(ref.title) + "</span>");
-      return span;
-    }
-    var chip = el('<a class="chip" role="link" tabindex="0"><span class="dot ' + dotClass(byId[ref.id] && byId[ref.id].entity_kind) + '"></span>' + esc(ref.title) + "</a>");
-    var target = (ref.type === "entity" ? "entity/" : "topic/") + ref.id;
-    chip.addEventListener("click", function () { go(target); });
-    chip.addEventListener("keydown", function (ev) { if (ev.key === "Enter") go(target); });
-    return chip;
+  function renderNodes() {
+    var view = element('<div class="view"></div>');
+    view.innerHTML = '<div class="hero"><p class="eyebrow">Compiled Graph</p><h1>知识图谱</h1><p class="lede">浏览四类编译节点。筛选与搜索只在当前 HTML 内进行，不会访问网络。</p></div>' +
+      '<div class="searchbar"><input id="node-search" type="search" placeholder="搜索标题、摘要、别名或状态…" value="' + esc(nodeQuery) + '"></div><div class="filters" id="node-filters"></div><div class="list" id="node-list"></div>';
+    replace(view);
+    var filters = view.querySelector("#node-filters");
+    [{ id: "all", label: "全部" }, { id: "entity", label: "实体" }, { id: "event", label: "事件" }, { id: "statement", label: "洞察" }, { id: "topic", label: "主题" }].forEach(function (item) {
+      var button = element('<button class="' + (filterType === item.id ? "active" : "") + '">' + item.label + " · " + (item.id === "all" ? DATA.nodes.length : DATA.counts[item.id]) + "</button>");
+      button.addEventListener("click", function () { filterType = item.id; renderNodes(); });
+      filters.appendChild(button);
+    });
+    view.querySelector("#node-search").addEventListener("input", function (event) { nodeQuery = event.target.value; paintNodeList(view.querySelector("#node-list")); });
+    paintNodeList(view.querySelector("#node-list"));
+    view.querySelector("#node-search").focus({ preventScroll: true });
   }
 
-  function rawChip(rawId) {
-    var raw = rawById[rawId];
-    var label = raw ? raw.title : rawId;
-    var chip = el('<a class="chip raw" role="link" tabindex="0">📄 ' + esc(label) + "</a>");
-    chip.addEventListener("click", function () { go("raw/" + rawId); });
-    chip.addEventListener("keydown", function (ev) { if (ev.key === "Enter") go("raw/" + rawId); });
-    return chip;
-  }
-
-  // ---- detail ------------------------------------------------------------ //
-  function renderDetail(page) {
-    var view = el('<div class="view"></div>');
-    var back = el('<span class="back" role="link" tabindex="0">← ' + (page.type === "entity" ? "实体" : "主题") + "</span>");
-    back.addEventListener("click", function () { go(page.type === "entity" ? "entities" : "topics"); });
-    back.addEventListener("keydown", function (ev) { if (ev.key === "Enter") go(page.type === "entity" ? "entities" : "topics"); });
-    view.appendChild(back);
-
-    var kindText = page.type === "entity" ? (KIND_LABEL[page.entity_kind] || "实体") : "主题";
-    view.appendChild(el('<div class="detail-kind"><span class="dot ' + dotClass(page.entity_kind) + '"></span>' + kindText + "</div>"));
-    view.appendChild(el('<h1 class="detail-title">' + esc(page.title) + "</h1>"));
-    if (page.aliases && page.aliases.length) view.appendChild(el('<div class="detail-aliases">又称 ' + page.aliases.map(esc).join(" · ") + "</div>"));
-    if (page.summary) view.appendChild(el('<div class="lede">' + esc(page.summary) + "</div>"));
-    if (page.body_html) { var prose = el('<div class="prose"></div>'); prose.innerHTML = page.body_html; view.appendChild(prose); }
-
-    var related = page.related || [];
-    if (related.length) {
-      var rs = el('<section class="section"></section>');
-      rs.appendChild(el('<div class="section-label">关联 · ' + related.length + "</div>"));
-      related.forEach(function (r) {
-        var item = el('<a class="related-item" role="link" tabindex="0"></a>');
-        item.appendChild(el('<div class="related-head"><span class="dot ' + dotClass(r.entity_kind) + '"></span>' + esc(r.title) + '<span style="font-family:var(--mono);font-size:.6rem;letter-spacing:.15em;color:var(--ink-faint);text-transform:uppercase">' + (KIND_LABEL[r.type] || "") + "</span></div>"));
-        if (r.summary) item.appendChild(el('<div class="related-summary">' + esc(r.summary) + "</div>"));
-        var target = (r.type === "entity" ? "entity/" : "topic/") + r.id;
-        item.addEventListener("click", function () { go(target); });
-        item.addEventListener("keydown", function (ev) { if (ev.key === "Enter") go(target); });
-        rs.appendChild(item);
-      });
-      view.appendChild(rs);
-    }
-
-    var appear = page.timeline_appearances || [];
-    if (appear.length) {
-      var ts = el('<section class="section"></section>');
-      ts.appendChild(el('<div class="section-label">出现在时间线 · ' + appear.length + "</div>"));
-      appear.forEach(function (a) {
-        var mt = el('<div class="mini-time" role="link" tabindex="0"></div>');
-        mt.appendChild(el('<span class="d">' + esc(a.date) + (a.time ? " " + esc(a.time) : "") + "</span>"));
-        mt.appendChild(el("<span>" + esc(a.text) + "</span>"));
-        mt.addEventListener("click", function () { go("timeline"); });
-        ts.appendChild(mt);
-      });
-      view.appendChild(ts);
-    }
-
-    var sources = (page.sources || []).filter(function (s) { return rawById[s]; });
-    if (sources.length) {
-      var ss = el('<section class="section"></section>');
-      ss.appendChild(el('<div class="section-label">原料 · ' + sources.length + "</div>"));
-      var wrap = el('<div class="chip-wrap"></div>');
-      sources.forEach(function (sid) { wrap.appendChild(rawChip(sid)); });
-      ss.appendChild(wrap);
-      view.appendChild(ss);
-    }
-    app.replaceChildren(view);
-    window.scrollTo(0, 0);
-  }
-
-  // ---- raw --------------------------------------------------------------- //
-  function renderRaw(raw) {
-    var view = el('<div class="view"></div>');
-    var back = el('<span class="back" role="link" tabindex="0">← 返回</span>');
-    back.addEventListener("click", function () { history.length > 1 ? history.back() : go("timeline"); });
-    back.addEventListener("keydown", function (ev) { if (ev.key === "Enter") { history.length > 1 ? history.back() : go("timeline"); } });
-    view.appendChild(back);
-    view.appendChild(el('<div class="detail-kind"><span class="dot"></span>原料原文</div>'));
-    view.appendChild(el('<h1 class="detail-title">' + esc(raw.title) + "</h1>"));
-    var meta = [];
-    if (raw.event_date) meta.push(raw.event_date);
-    if (raw.tags && raw.tags.length) meta.push(raw.tags.map(function (t) { return "#" + t; }).join(" "));
-    if (meta.length) view.appendChild(el('<div class="detail-aliases">' + esc(meta.join("　·　")) + "</div>"));
-    var body = el('<div class="raw-body"></div>');
-    body.innerHTML = raw.body_html || '<p class="empty">（无内容）</p>';
-    view.appendChild(body);
-    app.replaceChildren(view);
-    window.scrollTo(0, 0);
-  }
-
-  // ---- router ------------------------------------------------------------ //
-  function setTab(route) {
-    var active = route === "entities" || route === "topics" || route === "timeline" ? route
-      : route.indexOf("entity/") === 0 ? "entities"
-      : route.indexOf("topic/") === 0 ? "topics"
-      : route.indexOf("raw/") === 0 ? "" : "timeline";
-    document.querySelectorAll("#tabs button").forEach(function (b) {
-      b.setAttribute("aria-current", b.dataset.route === active ? "true" : "false");
+  function paintNodeList(list) {
+    var query = nodeQuery.trim().toLocaleLowerCase();
+    var nodes = DATA.nodes.filter(function (node) {
+      if (filterType !== "all" && node.type !== filterType) return false;
+      var haystack = [node.id, node.title, node.summary, node.detail, node.current_state, node.status].concat(node.aliases || [], node.key_points || []).join(" ").toLocaleLowerCase();
+      return !query || haystack.indexOf(query) >= 0;
+    });
+    list.innerHTML = "";
+    if (!nodes.length) return list.insertAdjacentHTML("beforeend", '<p class="empty">没有匹配的节点。</p>');
+    nodes.forEach(function (node) {
+      var subtitle = node.type === "entity" ? node.entity_kind : node.type === "event" ? (node.event_kind || "") + (node.status ? " · " + (STATUS_LABEL[node.status] || node.status) : "") : node.type === "statement" ? node.current_state : node.summary;
+      list.insertAdjacentHTML("beforeend", '<a class="list-row" href="#/node/' + esc(node.id) + '"><div>' + typeTag(node.type) + '</div><div><div class="row-title">' + esc(node.title) + '</div><div class="row-summary">' + esc(subtitle || node.summary) + '</div></div><div class="row-meta">' + node.sources.length + " 来源<br>" + (node.outgoing.length + node.incoming.length) + " 关系</div></a>");
     });
   }
 
-  function route() {
-    var hash = location.hash.replace(/^#\/?/, "") || "timeline";
-    setTab(hash);
-    if (hash === "entities") return renderIndex("entities");
-    if (hash === "topics") return renderIndex("topics");
-    if (hash === "timeline") return renderTimeline();
-    if (hash.indexOf("entity/") === 0 || hash.indexOf("topic/") === 0) {
-      var page = byId[hash.split("/").slice(1).join("/")];
-      return page ? renderDetail(page) : renderTimeline();
+  function renderNode(node) {
+    var view = element('<article class="view"></article>');
+    var kind = node.type === "entity" ? node.entity_kind : node.type === "event" ? node.event_kind : "";
+    var topicContract = node.type === "topic" && node.attrs && node.attrs.topic_contract || null;
+    var topicReading = node.type === "topic" && node.attrs && node.attrs.topic_reading || null;
+    var backTarget = node.type === "topic" ? ["#/topics", "返回主题阅读"] : ["#/nodes", "返回知识图谱"];
+    view.innerHTML = '<a class="back" href="' + backTarget[0] + '">← ' + backTarget[1] + '</a><header class="detail-head"><div>' + typeTag(node.type, kind) + '<h1>' + esc(node.title) + '</h1><p class="detail-summary">' + esc(node.summary) + '</p></div><div class="detail-id">' + esc(node.id) + "<br>" + node.sources.length + " sources</div></header>";
+    var facts = [];
+    if (node.aliases.length) facts.push(["Aliases", node.aliases.join("、")]);
+    if (node.event_date) facts.push(["Event date", node.event_date]);
+    if (node.status) facts.push(["Status", STATUS_LABEL[node.status] || node.status]);
+    if (node.semantics && node.semantics.action) facts.push(["发生的事", node.semantics.action]);
+    if (node.semantics && node.semantics.event_basis) facts.push(["时间线类别", EVENT_BASIS_LABEL[node.semantics.event_basis] || node.semantics.event_basis]);
+    if (node.semantics && node.semantics.standalone_reason) facts.push(["独立回顾价值", node.semantics.standalone_reason]);
+    if (node.semantics && node.semantics.subject_role) facts.push(["与用户关系", node.semantics.subject_role]);
+    if (node.semantics && node.semantics.factuality) facts.push(["事实性", node.semantics.factuality + " · confidence " + node.semantics.confidence]);
+    if (node.semantics && node.semantics.started_at) facts.push(["开始时间", node.semantics.started_at]);
+    if (node.semantics && node.semantics.ended_at) facts.push(["结束时间", node.semantics.ended_at]);
+    if (node.semantics && node.semantics.time_precision) facts.push(["时间精度", node.semantics.time_precision]);
+    if (node.semantics && node.semantics.location_ref) facts.push(["地点", byId[node.semantics.location_ref] ? byId[node.semantics.location_ref].title : node.semantics.location_ref]);
+    if (node.semantics && node.semantics.object_refs && node.semantics.object_refs.length) facts.push(["相关对象", node.semantics.object_refs.map(function (id) { return byId[id] ? byId[id].title : id; }).join("、")]);
+    if (topicContract && topicContract.topic_kind) facts.push(["主题类型", topicContract.topic_kind]);
+    if (node.created) facts.push(["Created", node.created.slice(0, 16).replace("T", " ")]);
+    if (node.updated) facts.push(["Updated", node.updated.slice(0, 16).replace("T", " ")]);
+    if (facts.length) view.insertAdjacentHTML("beforeend", '<div class="fact-grid">' + facts.map(function (fact) { return '<div class="fact"><div class="fact-label">' + esc(fact[0]) + '</div><div class="fact-value">' + esc(fact[1]) + "</div></div>"; }).join("") + "</div>");
+    if (topicReading) view.insertAdjacentHTML("beforeend", renderTopicReading(topicReading));
+    if (node.type === "topic") {
+      view.insertAdjacentHTML("beforeend", '<section class="section">' + section("证据", node.evidence.length) + (node.evidence.length ? '<div class="history">' + node.evidence.map(function (item) { return '<div class="history-item"><div class="history-state">' + esc(item.claim) + '</div><div class="chips">' + chip(item.source) + '</div></div>'; }).join("") + "</div>" : '<p class="empty">暂无结构化证据。</p>') + "</section>");
+      if (topicContract) view.insertAdjacentHTML("beforeend", renderTopicContract(topicContract));
+      if (node.detail) view.insertAdjacentHTML("beforeend", '<section class="section">' + section("详细内容") + '<div class="prose">' + detailHtml(node.detail) + "</div></section>");
+      if (node.key_points.length) view.insertAdjacentHTML("beforeend", '<section class="section">' + section("关键点", node.key_points.length) + '<div class="prose"><ul>' + node.key_points.map(function (item) { return '<li>' + esc(item) + '</li>'; }).join("") + "</ul></div></section>");
+    } else {
+      if (node.detail) view.insertAdjacentHTML("beforeend", '<section class="section">' + section("详细内容") + '<div class="prose">' + detailHtml(node.detail) + "</div></section>");
+      if (node.key_points.length) view.insertAdjacentHTML("beforeend", '<section class="section">' + section("关键点", node.key_points.length) + '<div class="prose"><ul>' + node.key_points.map(function (item) { return '<li>' + esc(item) + '</li>'; }).join("") + "</ul></div></section>");
+      if (node.evidence.length) view.insertAdjacentHTML("beforeend", '<section class="section">' + section("证据", node.evidence.length) + '<div class="history">' + node.evidence.map(function (item) { return '<div class="history-item"><div class="history-state">' + esc(item.claim) + '</div><div class="chips">' + chip(item.source) + '</div></div>'; }).join("") + "</div></section>");
     }
-    if (hash.indexOf("raw/") === 0) {
-      var raw = rawById[hash.split("/").slice(1).join("/")];
-      return raw ? renderRaw(raw) : renderTimeline();
+    var eventEvidence = node.semantics && node.semantics.evidence || [];
+    if (eventEvidence.length) view.insertAdjacentHTML("beforeend", '<section class="section">' + section("事件事实证据", eventEvidence.length) + '<div class="history">' + eventEvidence.map(function (item) { var raw = rawById[item.source_id]; return '<div class="history-item"><div class="history-state">' + esc(item.claim) + '</div><div class="chips">' + (raw ? chip({ id: raw.id, title: raw.title, type: "raw" }) : '<span class="chip">' + esc(item.source_id) + '</span>') + '</div></div>'; }).join("") + "</div></section>");
+    if (node.uncertainties.length) view.insertAdjacentHTML("beforeend", '<section class="section">' + section("不确定信息", node.uncertainties.length) + '<div class="prose"><ul>' + node.uncertainties.map(function (item) { return '<li>' + esc(item) + '</li>'; }).join("") + "</ul></div></section>");
+    if (node.type === "entity") view.insertAdjacentHTML("beforeend", renderEntitySourceGroups(node.source_groups || {}));
+    if (node.current_state) view.insertAdjacentHTML("beforeend", '<section class="section">' + section("当前洞察") + '<div class="state-box">' + esc(node.current_state) + "</div></section>");
+    if (node.evolution.length) view.insertAdjacentHTML("beforeend", historySection("认知演进", node.evolution, "date", "state"));
+    if (node.date_history.length) view.insertAdjacentHTML("beforeend", historySection("日期历史", node.date_history, "changed_on", "event_date"));
+    if (node.status_history.length) view.insertAdjacentHTML("beforeend", historySection("状态历史", node.status_history, "date", "status"));
+    if (node.outgoing.length || node.incoming.length) {
+      var relation = '<section class="section">' + section("显式关系", node.outgoing.length + node.incoming.length) + '<div class="relation-grid"><div><h3>出边 · ' + node.outgoing.length + '</h3><div class="relation-list">' + node.outgoing.map(edgeRow).join("") + '</div></div><div><h3>反向关联 · ' + node.incoming.length + '</h3><div class="relation-list">' + node.incoming.map(edgeRow).join("") + "</div></div></div></section>";
+      view.insertAdjacentHTML("beforeend", relation);
     }
-    return renderTimeline();
+    if (node.timeline_appearances.length) {
+      view.insertAdjacentHTML("beforeend", '<section class="section">' + section("出现在时间线", node.timeline_appearances.length) + '<div class="history">' + node.timeline_appearances.map(function (item) { return '<div class="history-item"><div class="history-date">' + esc(item.date + (item.time ? " " + item.time : "")) + '</div><div class="history-state">' + esc(item.text) + "</div></div>"; }).join("") + "</div></section>");
+    }
+    if (node.related.length) view.insertAdjacentHTML("beforeend", '<section class="section">' + section("相关节点", node.related.length) + '<div class="chips">' + node.related.map(chip).join("") + "</div></section>");
+    if (node.sources.length) view.insertAdjacentHTML("beforeend", '<section class="section">' + section("原始来源", node.sources.length) + '<div class="chips">' + node.sources.map(chip).join("") + "</div></section>");
+    if (node.body_html && !node.detail) view.insertAdjacentHTML("beforeend", '<section class="section">' + section("节点正文") + '<div class="prose">' + node.body_html + "</div></section>");
+    var debugAttrs = Object.assign({}, node.attrs || {});
+    delete debugAttrs.topic_contract;
+    delete debugAttrs.topic_reading;
+    if (Object.keys(debugAttrs).length) view.insertAdjacentHTML("beforeend", '<details class="section"><summary>节点 attrs</summary><pre>' + esc(JSON.stringify(debugAttrs, null, 2)) + "</pre></details>");
+    replace(view);
   }
 
-  document.querySelectorAll("#tabs button").forEach(function (b) {
-    b.addEventListener("click", function () { go(b.dataset.route); });
-  });
-  document.getElementById("brand").addEventListener("click", function () { go("timeline"); });
-  document.getElementById("brand").addEventListener("keydown", function (ev) { if (ev.key === "Enter") go("timeline"); });
+  function refChips(ids, fallbackType) {
+    return (Array.isArray(ids) ? ids : []).map(function (id) { return chip(refById(id, fallbackType)); }).join("");
+  }
+
+  function renderTopicReading(reading) {
+    var evolution = Array.isArray(reading.evolution) ? reading.evolution : [];
+    var contradictions = Array.isArray(reading.contradictions) ? reading.contradictions : [];
+    var openQuestions = Array.isArray(reading.open_questions) ? reading.open_questions : [];
+    var html = '<section class="section">' + section("核心理解") + '<div class="state-box topic-question">' + esc(reading.core_understanding || "—") + '</div><div class="chips"><span class="chip">置信度 · ' + esc(reading.confidence == null ? "—" : reading.confidence) + "</span></div></section>";
+    html += '<section class="section">' + section("演变", evolution.length) + (evolution.length ? '<div class="history">' + evolution.map(function (item) {
+      return '<div class="history-item"><div class="history-date">' + esc(item.date || "未标日期") + '</div><div class="history-state">' + esc(item.state || "—") + '</div><div class="chips">' + refChips(item.source_ids, "raw") + "</div></div>";
+    }).join("") + "</div>" : '<p class="empty">暂无演变记录。</p>') + "</section>";
+    html += '<section class="section">' + section("矛盾", contradictions.length) + (contradictions.length ? '<div class="relation-list">' + contradictions.map(function (item) {
+      return '<div class="relation-row"><div class="relation-note">' + esc(item.description || "—") + '</div><div class="chips">' + refChips(item.member_refs) + refChips(item.source_ids, "raw") + "</div></div>";
+    }).join("") + "</div>" : '<p class="empty">暂无已识别矛盾。</p>') + "</section>";
+    html += '<section class="section">' + section("开放问题", openQuestions.length) + (openQuestions.length ? '<div class="relation-list">' + openQuestions.map(function (item) {
+      return '<div class="relation-row"><div class="history-state">' + esc(item.question || "—") + '</div><div class="relation-note">' + esc(item.basis || "") + '</div><div class="chips">' + refChips(item.source_ids, "raw") + "</div></div>";
+    }).join("") + "</div>" : '<p class="empty">暂无开放问题。</p>') + "</section>";
+    return html;
+  }
+
+  function renderEntitySourceGroups(groups) {
+    var values = [
+      { key: "direct", label: "直接来源", note: "Raw 通过 belongs_to 直接指向实体" },
+      { key: "via_events", label: "经事件", note: "事件通过显式关系或 semantics 指向实体" },
+      { key: "via_insights", label: "经洞察", note: "洞察通过显式关系指向实体" }
+    ];
+    return '<section class="section">' + section("实体来源路径") + '<div class="facet-grid">' + values.map(function (item) {
+      var refs = groups[item.key] || [];
+      return '<article class="facet-card"><h3>' + item.label + '</h3><p>' + item.note + '</p><div class="chips">' + (refs.length ? refs.map(chip).join("") : '<span class="chip">暂无</span>') + "</div></article>";
+    }).join("") + "</div></section>";
+  }
+
+  function renderTopicContract(contract) {
+    var rationales = contract.member_rationales || {};
+    var facets = contract.facets || [];
+    var exclusions = contract.exclusions || [];
+    var html = '<section class="section">' + section("成员合同") + '<p class="lede">以下结构说明主题如何组织成员，以及哪些相近证据仍在边界之外。</p></section>';
+    html += '<section class="section">' + section("主题组织问题") + '<div class="state-box topic-question">' + esc(contract.organizing_question || "—") + '</div><div class="fact-grid"><div class="fact"><div class="fact-label">侧面关系</div><div class="fact-value">' + esc(contract.facet_relationship || "—") + '</div></div><div class="fact"><div class="fact-label">成员边界</div><div class="fact-value">' + esc(contract.boundary_rule || "—") + "</div></div></div></section>";
+    html += '<section class="section">' + section("主题侧面", facets.length) + '<div class="facet-grid">' + facets.map(function (facet) {
+      var members = Array.isArray(facet.member_refs) ? facet.member_refs : (facet.statement_refs || []);
+      return '<article class="facet-card"><h3>' + esc(facet.name || "未命名侧面") + '</h3><p>' + esc(facet.summary || "") + "</p>" + members.map(function (id) {
+        var rationale = rationales[id] || {};
+        var target = refById(id, "statement");
+        return '<div class="facet-member">' + chip(target) + '<div class="facet-reason">' + esc(rationale.reason || "") + '</div><div class="facet-excerpt">依据：' + esc(rationale.supporting_excerpt || "—") + "</div></div>";
+      }).join("") + "</article>";
+    }).join("") + "</div></section>";
+    if (exclusions.length) html += '<section class="section">' + section("排除边界", exclusions.length) + '<div class="relation-list">' + exclusions.map(function (item) {
+      var id = item.member_ref || item.member_id || item.statement_id || "";
+      var target = refById(id, "statement");
+      return '<div class="relation-row">' + chip(target) + '<div class="facet-excerpt">最相关依据：' + esc(item.nearby_excerpt || "—") + '</div><div class="relation-note">' + esc(item.reason || "") + "</div></div>";
+    }).join("") + "</div></section>";
+    return html;
+  }
+
+  function historySection(title, values, dateKey, valueKey) {
+    return '<section class="section">' + section(title, values.length) + '<div class="history">' + values.map(function (item) {
+      var display = valueKey === "status" ? (STATUS_LABEL[item[valueKey]] || item[valueKey]) : item[valueKey];
+      var refs = (item.sources || item.source_ids || []).map(function (id) { return rawById[id] ? chip({ id: id, title: rawById[id].title, type: "raw" }) : '<span class="chip">' + esc(id) + "</span>"; }).join("");
+      return '<div class="history-item"><div class="history-date">' + esc(item[dateKey] || "未标日期") + '</div><div class="history-state">' + esc(display || "—") + '</div>' + (item.note ? '<div class="relation-note">' + esc(item.note) + "</div>" : "") + '<div class="chips">' + refs + "</div></div>";
+    }).join("") + "</div></section>";
+  }
+  function edgeRow(edge) {
+    return '<div class="relation-row"><div class="relation-kind">' + esc(edge.type) + (edge.inferred ? " · inferred" : "") + '</div><div>' + chip(edge.other) + '</div>' + (edge.note ? '<div class="relation-note">' + esc(edge.note) + "</div>" : "") + "</div>";
+  }
+
+  function renderRaws() {
+    var view = element('<div class="view"></div>');
+    view.innerHTML = '<div class="hero"><p class="eyebrow">Immutable Archive</p><h1>原始记录</h1><p class="lede">只读原文与编译注解。正文在 HTML 中完整保留，每条关联都可回到编译节点。</p></div><div class="searchbar"><input id="raw-search" type="search" placeholder="搜索标题、日期、标签或注解…" value="' + esc(rawQuery) + '"></div><div class="list" id="raw-list"></div>';
+    replace(view);
+    view.querySelector("#raw-search").addEventListener("input", function (event) { rawQuery = event.target.value; paintRawList(view.querySelector("#raw-list")); });
+    paintRawList(view.querySelector("#raw-list"));
+    view.querySelector("#raw-search").focus({ preventScroll: true });
+  }
+  function paintRawList(list) {
+    var query = rawQuery.trim().toLocaleLowerCase();
+    var raws = Object.keys(rawById).map(function (id) { return rawById[id]; }).filter(function (raw) {
+      var haystack = [raw.id, raw.title, raw.event_date, JSON.stringify(raw.tags), JSON.stringify(raw.annotations)].join(" ").toLocaleLowerCase();
+      return !query || haystack.indexOf(query) >= 0;
+    });
+    list.innerHTML = "";
+    if (!raws.length) return list.insertAdjacentHTML("beforeend", '<p class="empty">没有匹配的原始记录。</p>');
+    raws.forEach(function (raw) {
+      list.insertAdjacentHTML("beforeend", '<a class="list-row" href="#/raw/' + esc(raw.id) + '"><div>' + typeTag("raw") + '</div><div><div class="row-title">' + esc(raw.title) + '</div><div class="row-summary">' + esc(raw.annotations.summary || (raw.tags || []).map(function (tag) { return "#" + tag; }).join(" ")) + '</div></div><div class="row-meta">' + esc(raw.event_date) + "<br>" + raw.belongs_to.length + " 节点 · " + (raw.incoming || []).length + " 主题</div></a>");
+    });
+  }
+
+  function renderRaw(raw) {
+    var view = element('<article class="view"></article>');
+    view.innerHTML = '<a class="back" href="#/raws">← 返回原始记录</a><header class="detail-head"><div>' + typeTag("raw") + '<h1>' + esc(raw.title) + '</h1><p class="detail-summary">' + esc(raw.annotations.summary || "不可变原文") + '</p></div><div class="detail-id">' + esc(raw.id) + "<br>" + esc(raw.event_date) + "</div></header>";
+    var annotationKeys = Object.keys(raw.annotations || {});
+    if (annotationKeys.length) view.insertAdjacentHTML("beforeend", '<section class="section">' + section("编译注解", annotationKeys.length) + '<dl class="annotation-grid">' + annotationKeys.map(function (key) { return '<div class="annotation"><dt>' + esc(key) + "</dt><dd>" + esc(valueText(raw.annotations[key])) + "</dd></div>"; }).join("") + "</dl></section>");
+    if (raw.tags.length) view.insertAdjacentHTML("beforeend", '<section class="section">' + section("标签", raw.tags.length) + '<div class="chips">' + raw.tags.map(function (tag) { return '<span class="chip">#' + esc(tag) + "</span>"; }).join("") + "</div></section>");
+    if (raw.belongs_to.length) view.insertAdjacentHTML("beforeend", '<section class="section">' + section("归属节点", raw.belongs_to.length) + '<div class="chips">' + raw.belongs_to.map(chip).join("") + "</div></section>");
+    if ((raw.incoming || []).length) view.insertAdjacentHTML("beforeend", '<section class="section">' + section("所属主题", raw.incoming.length) + '<div class="relation-list">' + raw.incoming.map(edgeRow).join("") + "</div></section>");
+    view.insertAdjacentHTML("beforeend", '<section class="section">' + section("原文") + '<div class="prose">' + (raw.body_html || '<p class="empty">无正文</p>') + "</div></section>");
+    replace(view);
+  }
+
+  function setActive(route) {
+    var tab = route.split("/")[0];
+    if (tab === "node") {
+      var detailNode = byId[decodeURIComponent(route.slice(5))];
+      tab = detailNode && detailNode.type === "topic" ? "topics" : "nodes";
+    }
+    if (tab === "raw") tab = "raws";
+    document.querySelectorAll("nav a").forEach(function (link) { link.setAttribute("aria-current", link.dataset.tab === tab ? "page" : "false"); });
+  }
+  function router() {
+    var route = location.hash.replace(/^#\/?/, "") || "topics";
+    setActive(route);
+    if (route === "topics") return renderTopics();
+    if (route === "overview") return renderOverview();
+    if (route === "timeline") return renderTimeline();
+    if (route === "nodes") return renderNodes();
+    if (route === "raws") return renderRaws();
+    if (route.indexOf("node/") === 0) {
+      var node = byId[decodeURIComponent(route.slice(5))];
+      return node ? renderNode(node) : renderNodes();
+    }
+    if (route.indexOf("raw/") === 0) {
+      var raw = rawById[decodeURIComponent(route.slice(4))];
+      return raw ? renderRaw(raw) : renderRaws();
+    }
+    renderTopics();
+  }
 
   var c = DATA.counts;
-  document.getElementById("foot-counts").textContent = c.entities + " 实体 · " + c.topics + " 主题 · " + c.timeline + " 天 · " + c.raw + " 原料";
-  document.getElementById("foot-gen").textContent = "生成于 " + (DATA.generated_at || "").slice(0, 16).replace("T", " ");
-
-  window.addEventListener("hashchange", route);
-  route();
+  document.getElementById("footer-counts").textContent = c.nodes + " 节点 · " + c.edges + " 边 · " + c.timeline + " 天 · " + c.raw + " 原文";
+  document.getElementById("footer-generated").textContent = "生成于 " + DATA.generated_at.slice(0, 16).replace("T", " ") + " · " + DATA.repo;
+  if (isUnhealthy()) document.getElementById("health-dot").classList.add("warn");
+  window.addEventListener("hashchange", router);
+  router();
 })();
 </script>
 </body>
