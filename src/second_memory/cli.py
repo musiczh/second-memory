@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import webbrowser
 from pathlib import Path
@@ -26,6 +27,7 @@ from .compiler import (
     list_compiled_pages,
     load_manifest,
     manifest_drift,
+    pull_skill_code,
     read_pending,
     rebuild_state,
     skill_code_commit,
@@ -63,6 +65,37 @@ def fail(command: str, exc: Exception, json_output: bool = True) -> None:
 
 def read_stdin_text() -> str:
     return sys.stdin.read()
+
+
+_REEXEC_PULL_ENV = "SECOND_MEMORY_UPDATE_PULL"
+
+
+def sync_skill_code() -> dict[str, object]:
+    """Load ``origin/master`` before update decisions, re-execing at most once."""
+    carried = os.environ.get(_REEXEC_PULL_ENV)
+    if carried is not None:
+        try:
+            result = json.loads(carried)
+        except json.JSONDecodeError as exc:
+            raise SecondMemoryError("invalid carried code-update result", "code_update_failed") from exc
+        if not isinstance(result, dict) or not result.get("ok"):
+            raise SecondMemoryError("carried code-update result is not successful", "code_update_failed")
+        return result
+
+    result = pull_skill_code()
+    if not result.get("ok"):
+        message = str(result.get("message") or "unable to update Skill code from origin/master")
+        raise SecondMemoryError(message, "code_update_failed")
+    if result.get("updated"):
+        env = dict(os.environ)
+        env[_REEXEC_PULL_ENV] = json_dumps(result)
+        os.execve(
+            sys.executable,
+            [sys.executable, "-m", "second_memory.cli", *sys.argv[1:]],
+            env,
+        )
+        raise SecondMemoryError("failed to restart after code update", "code_update_failed")
+    return result
 
 
 @app.command()
@@ -304,15 +337,7 @@ def update(
     try:
         target = resolve_repo(repo)
         if emit_request:
-            code_commit = skill_code_commit()
-            pull = {
-                "attempted": False,
-                "ok": True,
-                "updated": False,
-                "before": code_commit,
-                "after": code_commit,
-                "message": "automatic code pull is disabled; update the Skill repository explicitly",
-            }
+            pull = sync_skill_code()
             decision = determine_update_mode(target)
             if decision["mode"] == "rebuild":
                 request = build_rebuild_request(target)

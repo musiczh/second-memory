@@ -397,6 +397,8 @@ salience: 0.75
 
 现有 `manifest.json` 记录 `kb_version` 与页面 content hash，`version_drift` / `manifest_drift` 检测漂移（见 [compiler.py](../src/second_memory/compiler.py) 的 `version_drift`）。当编译规则升级（如新增演化线格式、salience 算法），bump `KB_VERSION`，下次 `update` 自动走 raw-only sequential rebuild。**旧编译产物不进入新编译上下文，演进不留历史包袱**。
 
+版本判断之前必须先同步规则来源。`update --emit-request` 在 Skill／CLI 代码仓库执行 `git pull --ff-only origin master`，并要求更新后的本地 HEAD 与 `origin/master` 完全一致；HEAD 发生变化时通过一次受保护的 re-exec 重新加载 `KB_VERSION` 和编译实现。只有新代码进程可以比较 manifest 版本并决定 `rebuild`。拉取失败、历史分叉或目标 commit 无法确认时返回 `code_update_failed`，不得用旧代码降级执行，也不得修改知识库。代码 commit 变化但 `KB_VERSION` 不变时继续正常调度，不触发无意义重建。
+
 ### 4.7 Raw-only sequential rebuild
 
 rebuild 是对正常入库链路的确定性重放，不是旧编译页的数据迁移：

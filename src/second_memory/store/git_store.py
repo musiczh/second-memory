@@ -84,3 +84,27 @@ class GitStorage:
         if result.returncode != 0:
             return None
         return result.stdout.strip() or None
+
+    def pull_ff(self, remote: str = "origin", branch: str = "master") -> dict[str, object]:
+        """Fast-forward to one explicit remote branch and verify exact parity."""
+        before = self.full_commit()
+        result = self._git("pull", "--ff-only", remote, branch, check=False)
+        after = self.full_commit()
+        target_result = self._git("rev-parse", f"refs/remotes/{remote}/{branch}", check=False)
+        target = target_result.stdout.strip() if target_result.returncode == 0 else None
+        at_target = bool(after and target and after == target)
+        ok = result.returncode == 0 and at_target
+        message = (result.stdout + result.stderr).strip()
+        if result.returncode == 0 and not at_target:
+            mismatch = f"local HEAD {after or 'unknown'} does not match {remote}/{branch} {target or 'unknown'}"
+            message = f"{message}\n{mismatch}".strip()
+        return {
+            "attempted": True,
+            "ok": ok,
+            "updated": bool(before and after and before != after),
+            "before": before,
+            "after": after,
+            "target": target,
+            "remote_branch": f"{remote}/{branch}",
+            "message": message,
+        }

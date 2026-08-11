@@ -250,6 +250,10 @@ The self-contained page must expose all v2 projections: entity, event, insight (
 second-memory update --emit-request --json
 ```
 
+This command first runs `git pull --ff-only origin master` in the installed Skill／CLI repository. If HEAD advances, it re-execs once so every version check and emitted request comes from the newly loaded `master` code. The resulting code HEAD must exactly match `origin/master`; a fetch／fast-forward failure or divergent local history returns `code_update_failed` and must stop the workflow before any knowledge-base decision or mutation. Never fall back to rebuilding with stale code.
+
+Only after code synchronization may the CLI compare the freshly loaded `KB_VERSION` with the knowledge-base manifest `kb_version`. A mismatch must route to raw-only sequential `rebuild`; a match continues through the normal pending／Consolidation／quality-repair priority. A code update that does not change `KB_VERSION` must not rebuild. Report `data.code_update` with its before／after／target commits.
+
 The returned mode is authoritative:
 
 - `rebuild`: knowledge-base version or compiled content drift requires a raw-only sequential rebuild, or an existing rebuild is still in progress.
