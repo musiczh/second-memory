@@ -217,6 +217,9 @@
   .prose h2 { margin: 30px 0 10px; font-size: 21px; }
   .prose h3 { margin: 24px 0 8px; font-size: 17px; }
   .prose .detail-section-label { margin: 24px 0 8px; color: var(--accent); font: 11px/1.4 var(--mono); letter-spacing: .08em; }
+  .detail-section-label { margin: 16px 0 6px; color: var(--accent); font: 11px/1.4 var(--mono); letter-spacing: .08em; }
+  .row-highlights { margin: 6px 0 10px; padding-left: 20px; }
+  .row-highlights li { margin-bottom: 6px; font: 14.5px/1.65 var(--sans); color: var(--muted); }
   .prose p { margin-bottom: 16px; }
   .prose code { border-radius: 4px; padding: 2px 5px; background: var(--accent-soft); font: .87em/1.4 var(--mono); }
   .prose a { color: var(--accent); border-bottom: 1px solid currentColor; }
@@ -258,6 +261,38 @@
   .pill { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; padding: 5px 12px; background: var(--surface); color: var(--muted); font-size: 13px; }
   .pill b { color: var(--ink); font-weight: 600; }
   .pill.accent { border-color: color-mix(in srgb, var(--accent) 40%, transparent); color: var(--accent); }
+  .pill.emotion { border-color: color-mix(in srgb, var(--warn) 40%, transparent); color: var(--warn); }
+  .pill.raw { border-color: color-mix(in srgb, var(--raw) 45%, transparent); color: var(--raw); }
+  .type-line { margin-bottom: 14px; }
+  .tldr.raw-lead { border-left-color: var(--raw); }
+  .tldr.raw-lead .lead-label { color: var(--raw); }
+
+  /* 原料·编译要点(digest) */
+  .digest { display: grid; gap: 14px; }
+  .digest-card { border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; background: var(--surface); }
+  .digest-card.event { border-left: 3px solid var(--event); }
+  .digest-card.insight { border-left: 3px solid var(--statement); }
+  .digest-card.method { border-left: 3px solid var(--accent); }
+  .digest-card.other { border-left: 3px solid var(--faint); }
+  .digest-kind { display: inline-flex; align-items: center; gap: 6px; margin-bottom: 8px; padding: 3px 9px; border-radius: 6px; font: 10px/1.4 var(--mono); letter-spacing: .06em; }
+  .digest-kind.event { background: color-mix(in srgb, var(--event) 15%, transparent); color: var(--event); }
+  .digest-kind.insight { background: color-mix(in srgb, var(--statement) 15%, transparent); color: var(--statement); }
+  .digest-kind.method { background: var(--accent-soft); color: var(--accent); }
+  .digest-kind.other { background: color-mix(in srgb, var(--faint) 18%, transparent); color: var(--muted); }
+  .digest-text { font: 16.5px/1.7 var(--serif); }
+  .digest-meta { margin-top: 8px; color: var(--faint); font: 11px/1.5 var(--mono); }
+
+  /* 原料·原文(默认折叠,置于末尾) */
+  details.origin { margin-top: 40px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow); overflow: hidden; scroll-margin-top: 96px; }
+  details.origin > summary { list-style: none; cursor: pointer; padding: 20px 22px; display: flex; align-items: center; gap: 14px; }
+  details.origin > summary::-webkit-details-marker { display: none; }
+  details.origin > summary .chev { color: var(--faint); transition: transform .18s; font-size: 15px; }
+  details.origin[open] > summary .chev { transform: rotate(90deg); }
+  details.origin > summary .o-title { flex: 1; }
+  details.origin > summary .o-title strong { display: block; font: 600 19px/1.35 var(--serif); }
+  details.origin > summary .o-title small { display: block; margin-top: 3px; color: var(--faint); font: 11px/1.4 var(--mono); }
+  details.origin > summary:hover .o-title strong { color: var(--accent); }
+  .origin-body { padding: 6px 26px 26px; border-top: 1px solid var(--line); }
 
   /* ② 精读 */
   .highlights { margin: 26px 0 4px; padding: 18px 20px 18px 22px; border-radius: 12px; background: color-mix(in srgb, var(--accent) 6%, transparent); border: 1px solid var(--accent-soft); }
@@ -854,16 +889,104 @@
     });
   }
 
+  // 原料·编译要点:把 occurrences / claims 从机器 JSON 转成可读卡片
+  var CLAIM_KIND_LABEL = { insight: ["insight", "◆ 洞察"], belief: ["insight", "◆ 洞察"], method: ["method", "▲ 方法"], decision: ["method", "▲ 决定"], goal: ["method", "▲ 目标"] };
+  function digestCards(raw) {
+    var cards = [];
+    var occurrences = Array.isArray(raw.annotations.occurrences) ? raw.annotations.occurrences : [];
+    occurrences.forEach(function (occ) {
+      if (!occ || !occ.action) return;
+      var meta = [occ.started_at, SUBJECT_ROLE_LABEL[occ.subject_role] || occ.subject_role, FACTUALITY_LABEL[occ.factuality] || occ.factuality].filter(Boolean).join(" · ");
+      cards.push('<div class="digest-card event"><span class="digest-kind event">● 发生的事</span><div class="digest-text">' + esc(occ.action) + '</div>' + (meta ? '<div class="digest-meta">' + esc(meta) + '</div>' : "") + '</div>');
+    });
+    var claims = Array.isArray(raw.annotations.claims) ? raw.annotations.claims : [];
+    claims.forEach(function (claim) {
+      if (!claim || !claim.text) return;
+      var mapped = CLAIM_KIND_LABEL[claim.kind] || ["other", "◇ 要点"];
+      cards.push('<div class="digest-card ' + mapped[0] + '"><span class="digest-kind ' + mapped[0] + '">' + esc(mapped[1]) + '</span><div class="digest-text">' + esc(claim.text) + '</div></div>');
+    });
+    if (!cards.length) return { html: "", summary: "" };
+    var summary = [occurrences.length ? occurrences.length + " 事件" : "", claims.filter(function (c) { return c && (c.kind === "insight" || c.kind === "belief"); }).length + " 洞察", claims.filter(function (c) { return c && (c.kind === "method" || c.kind === "decision" || c.kind === "goal"); }).length + " 方法"].filter(function (s) { return s && s.indexOf("0 ") !== 0; }).join(" · ");
+    return { html: '<div class="digest">' + cards.join("") + '</div>', summary: summary };
+  }
+  // 原料·提及(mentions):可解析到实体时给出链接,否则显示 kind + text
+  var MENTION_KIND_LABEL = { task: "任务", concept: "概念", tool: "工具", person: "人物", place: "地点", org: "组织" };
+  function mentionChips(mentions) {
+    return (Array.isArray(mentions) ? mentions : []).map(function (m) {
+      if (!m || !m.text) return "";
+      if (m.target_id && byId[m.target_id]) return chip({ id: m.target_id, title: byId[m.target_id].title, type: byId[m.target_id].type });
+      return '<span class="chip">' + esc((MENTION_KIND_LABEL[m.kind] || m.kind || "") + (m.kind ? " · " : "")) + esc(m.text) + '</span>';
+    }).filter(Boolean).join("");
+  }
+  var IMPORTANCE_LABEL = function (value) { var n = Number(value); if (!isFinite(n)) return null; return n >= 5 ? "高" : n >= 3 ? "中" : "低"; };
+
   function renderRaw(raw) {
     var view = element('<article class="view"></article>');
-    view.innerHTML = '<a class="back" href="#/raws">← 返回原始记录</a><header class="detail-head"><div>' + typeTag("raw") + '<h1>' + esc(raw.title) + '</h1><p class="detail-summary">' + esc(raw.annotations.summary || "不可变原文") + '</p></div><div class="detail-id">' + esc(raw.id) + "<br>" + esc(raw.event_date) + "</div></header>";
-    var annotationKeys = Object.keys(raw.annotations || {});
-    if (annotationKeys.length) view.insertAdjacentHTML("beforeend", '<section class="section">' + section("编译注解", annotationKeys.length) + '<dl class="annotation-grid">' + annotationKeys.map(function (key) { return '<div class="annotation"><dt>' + esc(key) + "</dt><dd>" + esc(valueText(raw.annotations[key])) + "</dd></div>"; }).join("") + "</dl></section>");
-    if (raw.tags.length) view.insertAdjacentHTML("beforeend", '<section class="section">' + section("标签", raw.tags.length) + '<div class="chips">' + raw.tags.map(function (tag) { return '<span class="chip">#' + esc(tag) + "</span>"; }).join("") + "</div></section>");
-    if (raw.belongs_to.length) view.insertAdjacentHTML("beforeend", '<section class="section">' + section("归属节点", raw.belongs_to.length) + '<div class="chips">' + raw.belongs_to.map(chip).join("") + "</div></section>");
-    if ((raw.incoming || []).length) view.insertAdjacentHTML("beforeend", '<section class="section">' + section("所属主题", raw.incoming.length) + '<div class="relation-list">' + raw.incoming.map(edgeRow).join("") + "</div></section>");
-    view.insertAdjacentHTML("beforeend", '<section class="section">' + section("原文") + '<div class="prose">' + (raw.body_html || '<p class="empty">无正文</p>') + "</div></section>");
+    var ann = raw.annotations || {};
+    var toc = [];
+    var body = "";
+
+    // ① 导读
+    var pills = [];
+    if (raw.event_date) pills.push('<span class="pill raw">记录于 <b>' + esc(raw.event_date) + '</b></span>');
+    if (ann.emotion) pills.push('<span class="pill emotion">情绪 · ' + esc(ann.emotion) + '</span>');
+    var imp = IMPORTANCE_LABEL(ann.importance);
+    if (imp) pills.push('<span class="pill">重要度 <b>' + esc(imp) + '</b></span>');
+    if (raw.belongs_to.length) pills.push('<span class="pill">归属 <b>' + raw.belongs_to.length + '</b> 个节点</span>');
+    (raw.incoming || []).forEach(function (edge) { if (edge.other) pills.push('<span class="pill">属于主题「' + esc(edge.other.title) + '」</span>'); });
+    body += '<section class="block" id="sec-lead"><div class="type-line">' + typeTag("raw") + '</div>' +
+      '<h1 class="doc-title">' + esc(raw.title) + '</h1>' +
+      (pills.length ? '<div class="pills">' + pills.join("") + '</div>' : "") +
+      (ann.summary ? '<div class="tldr raw-lead"><span class="lead-label">这条记录讲什么</span><p>' + esc(ann.summary) + '</p></div>' : "") +
+      '</section>';
+    toc.push({ id: "sec-lead", label: "导读" });
+
+    // ② 编译要点
+    var digest = digestCards(raw);
+    if (digest.html) {
+      body += '<section class="block" id="sec-digest"><div class="section-title"><h2>编译要点</h2><span>' + esc(digest.summary) + '</span></div>' + digest.html + '</section>';
+      toc.push({ id: "sec-digest", label: "编译要点" });
+    }
+
+    // ③ 关联(归属节点 / 所属主题 / 提及)
+    var mentions = mentionChips(ann.mentions);
+    if (raw.belongs_to.length || (raw.incoming || []).length || mentions) {
+      var relBody = "";
+      if (raw.belongs_to.length) relBody += '<div class="subhead">归属节点（由本条原文编译得到）</div><div class="chips">' + raw.belongs_to.map(chip).join("") + '</div>';
+      if ((raw.incoming || []).length) relBody += '<div class="subhead">所属主题</div><div class="chips">' + raw.incoming.map(function (edge) { return chip(edge.other); }).join("") + '</div>';
+      if (mentions) relBody += '<div class="subhead">抽取到的提及（mentions）</div><div class="chips">' + mentions + '</div>';
+      var relSummary = [raw.belongs_to.length ? raw.belongs_to.length + " 归属节点" : "", (raw.incoming || []).length ? raw.incoming.length + " 主题" : "", (Array.isArray(ann.mentions) ? ann.mentions.length : 0) ? ann.mentions.length + " 提及" : ""].filter(Boolean).join(" · ");
+      body += foldSection("关联", relSummary, relBody);
+      toc.push({ id: null, label: "关联" });
+    }
+
+    // ④ 原文(默认折叠,置于末尾)
+    var originCount = (raw.body_html.match(/<h1/gi) || []).length;
+    body += '<details class="origin" id="sec-origin"><summary><span class="chev">▸</span>' +
+      '<span class="o-title"><strong>展开原文</strong><small>不可变原始记录 · 采集时原样写入，编译不改写</small></span></summary>' +
+      '<div class="origin-body"><div class="prose">' + (raw.body_html || '<p class="empty">无正文</p>') + '</div></div></details>';
+    toc.push({ id: "sec-origin", label: "原文" });
+
+    // ⑤ 元信息 / 调试字段
+    var meta = [["Raw ID", raw.id], ["Type", "raw"]];
+    if (raw.created) meta.push(["Created", raw.created.slice(0, 16).replace("T", " ")]);
+    if (raw.event_date) meta.push(["Event date", raw.event_date]);
+    if (ann.importance != null) meta.push(["Importance", ann.importance]);
+    if (raw.tags.length) meta.push(["Tags", raw.tags.join("、")]);
+    var metaBody = '<div class="meta-grid">' + meta.map(function (m) { return '<div class="meta-cell"><dt>' + esc(m[0]) + '</dt><dd>' + esc(m[1]) + '</dd></div>'; }).join("") + '</div>';
+    var rawFields = {};
+    ["mentions", "occurrences", "claims"].forEach(function (key) { if (ann[key] != null) rawFields[key] = ann[key]; });
+    if (Object.keys(rawFields).length) metaBody += '<pre>' + esc(JSON.stringify(rawFields, null, 2)) + '</pre>';
+    body += '<details class="meta"><summary>元信息 / 调试字段</summary>' + metaBody + '</details>';
+
+    // 组装:浮动目录 + 阅读列
+    var tocHtml = '<aside class="toc"><div class="toc-eyebrow">本页目录</div><ol>' + toc.filter(function (t) { return t.id; }).map(function (t) {
+      return '<li><a href="#' + t.id + '" data-spy>' + esc(t.label) + '</a></li>';
+    }).join("") + '</ol></aside>';
+    view.innerHTML = '<a class="back" href="#/raws">← 返回原始记录</a>' +
+      '<div class="doc-grid">' + tocHtml + '<div class="reading">' + body + '</div></div>';
     replace(view);
+    setupSpy(view);
   }
 
   function setActive(route) {
