@@ -661,14 +661,47 @@ def render_static_overview(model: dict[str, Any]) -> str:
         )
 
     raw_rows = []
+    claim_kind_labels = {
+        "insight": "洞察", "belief": "洞察",
+        "method": "方法", "decision": "决定", "goal": "目标",
+    }
+    importance_words = {5: "高", 4: "高", 3: "中", 2: "低", 1: "低"}
     for raw in model["raws"].values():
-        summary = raw.get("annotations", {}).get("summary") or "、".join(raw.get("tags", []))
+        ann = raw.get("annotations", {}) or {}
+        summary = ann.get("summary") or "、".join(raw.get("tags", []))
+        # 编译要点:把 occurrences / claims 转成可读列表(而非机器 JSON)
+        points = []
+        for occ in ann.get("occurrences", []) if isinstance(ann.get("occurrences"), list) else []:
+            if isinstance(occ, dict) and occ.get("action"):
+                points.append(f'<li><strong>发生的事：</strong>{escape(occ.get("action"))}</li>')
+        for claim in ann.get("claims", []) if isinstance(ann.get("claims"), list) else []:
+            if isinstance(claim, dict) and claim.get("text"):
+                label = claim_kind_labels.get(str(claim.get("kind")), "要点")
+                points.append(f'<li><strong>{escape(label)}：</strong>{escape(claim.get("text"))}</li>')
+        points_html = (
+            f'<div class="detail-section-label">编译要点</div><ul class="row-highlights">{"".join(points)}</ul>'
+        ) if points else ""
+        # 归属节点(可读标题)
+        belongs = "、".join(escape(ref.get("title")) for ref in raw.get("belongs_to", []) if isinstance(ref, dict))
+        belongs_html = f'<div class="row-meta" style="text-align:left">归属 {len(raw.get("belongs_to", []))} 个节点{(" · " + belongs) if belongs else ""}</div>' if raw.get("belongs_to") else ""
+        # 原文:折叠置后,完整保留
+        origin_html = (
+            '<details class="raw-fold"><summary>展开原文（不可变原始记录）</summary>'
+            f'<div class="fold-body"><div class="prose">{raw.get("body_html") or "<p>无正文</p>"}</div></div></details>'
+        )
+        imp = importance_words.get(ann.get("importance"))
+        meta_bits = " · ".join(
+            bit for bit in [escape(raw.get("event_date")), (f"重要度 {imp}" if imp else ""), (escape(ann.get("emotion")) if ann.get("emotion") else "")] if bit
+        )
         raw_rows.append(
-            '<div class="list-row">'
-            '<div><span class="type-label"><span class="type-dot raw"></span>原文</span></div>'
-            f'<div><div class="row-title">{escape(raw["title"])}</div>'
-            f'<div class="row-summary">{escape(summary)}</div></div>'
-            f'<div class="row-meta">{escape(raw.get("event_date"))}</div></div>'
+            '<details class="relation-row">'
+            f'<summary>原文 · <strong>{escape(raw["title"])}</strong></summary>'
+            f'<p class="row-summary">{escape(summary)}</p>'
+            f'{points_html}'
+            f'{belongs_html}'
+            f'{origin_html}'
+            f'<div class="row-meta" style="text-align:left">{meta_bits}</div>'
+            "</details>"
         )
 
     health_state = "需重建" if health["version_drift"] else "版本一致"
