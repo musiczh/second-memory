@@ -7,7 +7,7 @@ from second_memory import frontmatter
 from second_memory.compiler import add_raw, apply_response, build_compile_request, load_manifest
 from second_memory.wiki import TEMPLATE_PATH, build_wiki_model, render_html, render_markdown
 
-from tests.helpers import RepositoryTestCase, content, event_semantics
+from tests.helpers import RepositoryTestCase, content, event_semantics, raw_annotation_fields
 
 
 class WikiTest(RepositoryTestCase):
@@ -256,7 +256,7 @@ class WikiTest(RepositoryTestCase):
             "mode": "incremental",
             "raw_annotations": [{
                 "raw_id": raw_id,
-                "summary": "确定本地优先",
+                **raw_annotation_fields("确定本地优先"),
                 "importance": 5,
                 "emotion": "坚定",
                 "mentions": [{"text": "Second Memory", "kind": "project", "confidence": 0.99}],
@@ -346,7 +346,7 @@ class WikiTest(RepositoryTestCase):
 
         raw = model["raws"][raw_id]
         self.assertEqual(3, len(raw["belongs_to"]))
-        self.assertEqual("确定本地优先", raw["annotations"]["summary"])
+        self.assertEqual(raw_annotation_fields("确定本地优先")["summary"], raw["annotations"]["summary"])
         self.assertIn("&lt;/script&gt;&lt;script&gt;", raw["body_html"])
 
         html = render_html(model)

@@ -28,6 +28,16 @@ from tests.helpers import RepositoryTestCase
 
 
 RAW_ID = "raw-20260805-0900-semantics"
+RAW_HEADLINE = "郑焕在 Second Memory 项目中完成语义契约验证，确认内容质量、事件发生性与来源追溯规则能够持续受到约束，并为后续编译回归留下稳定依据。"
+RAW_SEGMENT = "该原料记录了郑焕在 Second Memory 项目中完成语义契约验证的过程，验证覆盖内容质量、事件发生性与来源追溯，并为后续编译回归保留可审计依据。"
+
+
+def raw_annotation_fields() -> dict[str, Any]:
+    return {
+        "summary": RAW_HEADLINE,
+        "summary_segments": [RAW_SEGMENT],
+        "body_groups": [],
+    }
 
 
 def content(*, source_id: str = RAW_ID, node_type: str = "statement") -> dict[str, Any]:
@@ -135,7 +145,7 @@ def compile_plan(action: dict[str, Any]) -> CompilePlan:
         "mode": "incremental",
         "raw_annotations": [{
             "raw_id": RAW_ID,
-            "summary": "完成 V2.1 语义契约验证",
+            **raw_annotation_fields(),
             "importance": 5,
             "emotion": "平静",
             **channels,
@@ -528,7 +538,7 @@ class CompilePlanSemanticsTest(unittest.TestCase):
             "mode": "incremental",
             "raw_annotations": [{
                 "raw_id": RAW_ID,
-                "summary": "一次没有耐久节点价值的普通聊天",
+                **raw_annotation_fields(),
                 "importance": 1,
                 "emotion": "",
                 "mentions": [],
@@ -542,6 +552,19 @@ class CompilePlanSemanticsTest(unittest.TestCase):
         })
 
         validate_compile_plan(plan, [self.raw], {RAW_ID: self.raw})
+
+    def test_raw_annotation_rejects_invalid_v25_headline_and_groups(self) -> None:
+        plan = compile_plan(create_action())
+        plan.raw_annotations[0]["summary"] = "过短摘要"
+
+        with self.assertRaisesRegex(ValidationError, "60 to 100"):
+            validate_compile_plan(plan, [self.raw], {RAW_ID: self.raw})
+
+        plan = compile_plan(create_action())
+        plan.raw_annotations[0]["body_groups"] = [["unknown-atom"]]
+
+        with self.assertRaisesRegex(ValidationError, "body_groups"):
+            validate_compile_plan(plan, [self.raw], {RAW_ID: self.raw})
 
     def test_event_semantics_requires_every_fixed_field(self) -> None:
         required = [
@@ -682,7 +705,7 @@ class CompilePlanSemanticsTest(unittest.TestCase):
             "mode": "incremental",
             "raw_annotations": [{
                 "raw_id": RAW_ID,
-                "summary": "本条原料再次明确提到 Second Memory 项目",
+                **raw_annotation_fields(),
                 "importance": 3,
                 "emotion": "平静",
                 "mentions": [{
@@ -987,7 +1010,7 @@ class SemanticProjectionTest(RepositoryTestCase):
             "mode": "incremental",
             "raw_annotations": [{
                 "raw_id": raw_id,
-                "summary": "V2.1 语义投影验证",
+                **raw_annotation_fields(),
                 "importance": 5,
                 "emotion": "平静",
                 **channels,
@@ -1047,7 +1070,7 @@ class SemanticProjectionTest(RepositoryTestCase):
             "mode": "incremental",
             "raw_annotations": [{
                 "raw_id": raw_id,
-                "summary": event_summary,
+                **raw_annotation_fields(),
                 "importance": 3,
                 "emotion": "满足",
                 "mentions": [{"text": "海底捞", "kind": "place", "confidence": 0.99}],

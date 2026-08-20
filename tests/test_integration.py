@@ -41,7 +41,7 @@ from second_memory.transaction import KnowledgeTransaction, recover_transaction,
 from second_memory.utils import sha256_text
 from second_memory.wiki import build_wiki_model
 
-from tests.helpers import RepositoryTestCase, content, event_semantics, topic_attrs
+from tests.helpers import RepositoryTestCase, content, event_semantics, raw_annotation_fields, topic_attrs
 
 
 CODE_UPDATE_ENV = {
@@ -68,7 +68,7 @@ class CompileIntegrationTest(RepositoryTestCase):
             "mode": "incremental",
             "raw_annotations": [{
                 "raw_id": raw_id,
-                "summary": "一次没有独立结果的普通聊天",
+                **raw_annotation_fields("一次没有独立结果的普通聊天"),
                 "importance": 1,
                 "emotion": "",
                 "mentions": [],
@@ -103,7 +103,7 @@ class CompileIntegrationTest(RepositoryTestCase):
             "mode": "incremental",
             "raw_annotations": [{
                 "raw_id": first_raw,
-                "summary": "首次记录心理咨询",
+                **raw_annotation_fields("首次记录心理咨询"),
                 "importance": 4,
                 "emotion": "平静",
                 "mentions": [{"text": "心理咨询", "kind": "concept", "confidence": 0.99}],
@@ -136,7 +136,7 @@ class CompileIntegrationTest(RepositoryTestCase):
             "mode": "incremental",
             "raw_annotations": [{
                 "raw_id": second_raw,
-                "summary": "再次记录心理咨询",
+                **raw_annotation_fields("再次记录心理咨询"),
                 "importance": 3,
                 "emotion": "平静",
                 "mentions": [{
@@ -199,7 +199,7 @@ class CompileIntegrationTest(RepositoryTestCase):
             "schema_version": 2,
             "session_id": request["context"]["session_id"],
             "mode": "incremental",
-            "raw_annotations": [{"raw_id": second_raw, "summary": "里程碑调整到 8 月 15 日", "importance": 4, "emotion": "专注", "mentions": [], "occurrences": [], "claims": [{"kind": "plan", "text": "里程碑调整到 8 月 15 日"}]}],
+            "raw_annotations": [{"raw_id": second_raw, **raw_annotation_fields("里程碑调整到 8 月 15 日"), "importance": 4, "emotion": "专注", "mentions": [], "occurrences": [], "claims": [{"kind": "plan", "text": "里程碑调整到 8 月 15 日"}]}],
             "node_actions": [{
                 "action": "change",
                 "target_id": statement_id,
@@ -236,7 +236,7 @@ class CompileIntegrationTest(RepositoryTestCase):
             "mode": "incremental",
             "raw_annotations": [{
                 "raw_id": second_raw,
-                "summary": "同一天形成新状态",
+                **raw_annotation_fields("同一天形成新状态"),
                 "importance": 4,
                 "emotion": "平静",
                 "mentions": [],
@@ -427,7 +427,7 @@ class CompileIntegrationTest(RepositoryTestCase):
             "schema_version": 2,
             "session_id": request["context"]["session_id"],
             "mode": "incremental",
-            "raw_annotations": [{"raw_id": first_raw, "summary": "计划发布 v2", "importance": 4, "emotion": "期待", "mentions": [], "occurrences": [{"action": "发布 Second Memory v2", "subject_role": "user", "started_at": "2026-08-20", "factuality": "planned", "event_basis": "milestone", "standalone_reason": "版本发布有明确承诺、日期和交付结果，脱离相关解释后仍值得进入项目时间线。", "confidence": 0.95}], "claims": []}],
+            "raw_annotations": [{"raw_id": first_raw, **raw_annotation_fields("计划发布 v2"), "importance": 4, "emotion": "期待", "mentions": [], "occurrences": [{"action": "发布 Second Memory v2", "subject_role": "user", "started_at": "2026-08-20", "factuality": "planned", "event_basis": "milestone", "standalone_reason": "版本发布有明确承诺、日期和交付结果，脱离相关解释后仍值得进入项目时间线。", "confidence": 0.95}], "claims": []}],
             "node_actions": [{
                 "action": "create",
                 "ref": "release",
@@ -461,7 +461,7 @@ class CompileIntegrationTest(RepositoryTestCase):
             "schema_version": 2,
             "session_id": request["context"]["session_id"],
             "mode": "incremental",
-            "raw_annotations": [{"raw_id": second_raw, "summary": "v2 已发布", "importance": 5, "emotion": "轻松", "mentions": [], "occurrences": [{"action": "发布 Second Memory v2", "subject_role": "user", "started_at": "2026-08-20", "factuality": "occurred", "event_basis": "milestone", "standalone_reason": "版本发布有明确交付结果和发生日期，脱离相关解释后仍值得进入项目时间线。", "confidence": 0.95}], "claims": []}],
+            "raw_annotations": [{"raw_id": second_raw, **raw_annotation_fields("v2 已发布"), "importance": 5, "emotion": "轻松", "mentions": [], "occurrences": [{"action": "发布 Second Memory v2", "subject_role": "user", "started_at": "2026-08-20", "factuality": "occurred", "event_basis": "milestone", "standalone_reason": "版本发布有明确交付结果和发生日期，脱离相关解释后仍值得进入项目时间线。", "confidence": 0.95}], "claims": []}],
             "node_actions": [{
                 "action": "change",
                 "target_id": event_id,
@@ -493,7 +493,7 @@ class CompileIntegrationTest(RepositoryTestCase):
             "schema_version": 2,
             "session_id": request["context"]["session_id"],
             "mode": "incremental",
-            "raw_annotations": [{"raw_id": third_raw, "summary": "发布记录被后续版本替代", "importance": 3, "emotion": "", "mentions": [], "occurrences": [{"action": "发布 Second Memory v2", "subject_role": "user", "started_at": "2026-08-20", "factuality": "occurred", "event_basis": "milestone", "standalone_reason": "原发布记录的有效状态已经发生变化，脱离相关解释后仍需要在项目时间线上追溯。", "confidence": 0.95}], "claims": []}],
+            "raw_annotations": [{"raw_id": third_raw, **raw_annotation_fields("发布记录被后续版本替代"), "importance": 3, "emotion": "", "mentions": [], "occurrences": [{"action": "发布 Second Memory v2", "subject_role": "user", "started_at": "2026-08-20", "factuality": "occurred", "event_basis": "milestone", "standalone_reason": "原发布记录的有效状态已经发生变化，脱离相关解释后仍需要在项目时间线上追溯。", "confidence": 0.95}], "claims": []}],
             "node_actions": [{
                 "action": "supersede",
                 "target_id": event_id,
@@ -531,7 +531,7 @@ class CompileIntegrationTest(RepositoryTestCase):
             "schema_version": 2,
             "session_id": request["context"]["session_id"],
             "mode": "incremental",
-            "raw_annotations": [{"raw_id": first_raw, "summary": "计划 8 月 12 日完成", "importance": 4, "emotion": "", "mentions": [], "occurrences": [{"action": "完成 CompilePlan v2", "subject_role": "user", "started_at": "2026-08-12", "factuality": "planned", "event_basis": "milestone", "standalone_reason": "该交付有明确完成日期和验收结果，脱离计划说明后仍值得进入项目时间线。", "confidence": 0.95}], "claims": []}],
+            "raw_annotations": [{"raw_id": first_raw, **raw_annotation_fields("计划 8 月 12 日完成"), "importance": 4, "emotion": "", "mentions": [], "occurrences": [{"action": "完成 CompilePlan v2", "subject_role": "user", "started_at": "2026-08-12", "factuality": "planned", "event_basis": "milestone", "standalone_reason": "该交付有明确完成日期和验收结果，脱离计划说明后仍值得进入项目时间线。", "confidence": 0.95}], "claims": []}],
             "node_actions": [{
                 "action": "create",
                 "ref": "milestone",
@@ -563,7 +563,7 @@ class CompileIntegrationTest(RepositoryTestCase):
             "schema_version": 2,
             "session_id": request["context"]["session_id"],
             "mode": "incremental",
-            "raw_annotations": [{"raw_id": second_raw, "summary": "截止日期调整到 8 月 15 日", "importance": 4, "emotion": "", "mentions": [], "occurrences": [{"action": "完成 CompilePlan v2", "subject_role": "user", "started_at": "2026-08-15", "factuality": "planned", "event_basis": "milestone", "standalone_reason": "交付日期已明确调整并形成新的承诺，脱离说明后仍需要在项目时间线上回顾。", "confidence": 0.95}], "claims": []}],
+            "raw_annotations": [{"raw_id": second_raw, **raw_annotation_fields("截止日期调整到 8 月 15 日"), "importance": 4, "emotion": "", "mentions": [], "occurrences": [{"action": "完成 CompilePlan v2", "subject_role": "user", "started_at": "2026-08-15", "factuality": "planned", "event_basis": "milestone", "standalone_reason": "交付日期已明确调整并形成新的承诺，脱离说明后仍需要在项目时间线上回顾。", "confidence": 0.95}], "claims": []}],
             "node_actions": [{
                 "action": "change",
                 "target_id": event_id,
@@ -765,7 +765,7 @@ class ConsolidationIntegrationTest(RepositoryTestCase):
             "mode": "incremental",
             "raw_annotations": [{
                 "raw_id": raw["id"],
-                "summary": "该原料没有形成耐久节点",
+                **raw_annotation_fields("该原料没有形成耐久节点"),
                 "importance": 1,
                 "emotion": "",
                 "mentions": [],
@@ -1067,7 +1067,7 @@ class EntityEvidenceApplyIntegrationTest(RepositoryTestCase):
             "raw_annotations": [
                 {
                     "raw_id": raw_id,
-                    "summary": title,
+                    **raw_annotation_fields(title),
                     "importance": 3,
                     "emotion": "",
                     "mentions": [{"text": title, "kind": "concept", "confidence": 0.99}],
@@ -1113,7 +1113,7 @@ class QualityRepairIntegrationTest(RepositoryTestCase):
             "raw_annotations": [
                 {
                     "raw_id": raw_id,
-                    "summary": title,
+                    **raw_annotation_fields(title),
                     "importance": 3,
                     "emotion": "",
                     "mentions": [{"text": title, "kind": "concept", "confidence": 0.99}],
@@ -1664,7 +1664,7 @@ class RawOnlySequentialRebuildTest(RepositoryTestCase):
             "schema_version": 2,
             "session_id": context["session_id"],
             "mode": "rebuild",
-            "raw_annotations": [{"raw_id": raw_id, "summary": f"{raw['title']} 的 v2 摘要", "importance": 3, "emotion": "", "mentions": [], "occurrences": [], "claims": [{"kind": "insight", "text": str(raw["body"]).strip()}]}],
+            "raw_annotations": [{"raw_id": raw_id, **raw_annotation_fields(f"{raw['title']} 的 v2 摘要"), "importance": 3, "emotion": "", "mentions": [], "occurrences": [], "claims": [{"kind": "insight", "text": str(raw["body"]).strip()}]}],
             "node_actions": [{
                 "action": "create",
                 "ref": ref,
@@ -1763,7 +1763,7 @@ class RawOnlySequentialRebuildTest(RepositoryTestCase):
             "mode": "rebuild",
             "raw_annotations": [{
                 "raw_id": raw["id"],
-                "summary": "原料没有形成耐久节点",
+                **raw_annotation_fields("原料没有形成耐久节点"),
                 "importance": 1,
                 "emotion": "",
                 "mentions": [],
@@ -1855,7 +1855,7 @@ class RawOnlySequentialRebuildTest(RepositoryTestCase):
         self.assertEqual(str(self.repo), config["path"])
         self.assertEqual("2.4.0", config["kb_version"])
         self.assertNotIn("compile_version", config)
-        self.assertIn("v2.4 编译与检索规则", (self.repo / "AGENTS.md").read_text(encoding="utf-8"))
+        self.assertIn("v2.5 编译与检索规则", (self.repo / "AGENTS.md").read_text(encoding="utf-8"))
         self.assertEqual(DEFAULT_GITIGNORE, (self.repo / ".gitignore").read_text(encoding="utf-8"))
 
     def test_final_tail_rejects_stale_or_invalid_response_without_promotion(self) -> None:
