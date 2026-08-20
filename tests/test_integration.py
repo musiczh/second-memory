@@ -1853,7 +1853,7 @@ class RawOnlySequentialRebuildTest(RepositoryTestCase):
         config = frontmatter.parse_mapping((self.repo / ".kb" / "config.yaml").read_text(encoding="utf-8"))
         self.assertEqual(2, config["schema"])
         self.assertEqual(str(self.repo), config["path"])
-        self.assertEqual("2.4.0", config["kb_version"])
+        self.assertEqual("2.5.0", config["kb_version"])
         self.assertNotIn("compile_version", config)
         self.assertIn("v2.5 编译与检索规则", (self.repo / "AGENTS.md").read_text(encoding="utf-8"))
         self.assertEqual(DEFAULT_GITIGNORE, (self.repo / ".gitignore").read_text(encoding="utf-8"))

@@ -15,7 +15,22 @@ VALID_SCOPES = {"shared", "agent"}
 # compiled layer from the raw archive. It is intentionally separate from the
 # package version (__init__.__version__): plain code updates that do not change
 # compile rules must NOT bump this, so `update` will not force a rebuild.
-KB_VERSION = "2.4.0"
+KB_VERSION = "2.5.0"
+
+VECTOR_DEFAULTS: dict[str, Any] = {
+    "vector_enabled": True,
+    "vector_provider": "fastembed",
+    "vector_model": "BAAI/bge-small-zh-v1.5",
+    "vector_dimension": 512,
+    "vector_min_score": 0.35,
+    "vector_scan_k": 30,
+    "vector_unit_limit": 10,
+    "vector_raw_limit": 5,
+    "vector_chunk_target": 300,
+    "vector_chunk_min": 50,
+    "vector_chunk_max": 300,
+    "vector_chunk_overlap": 0.15,
+}
 
 
 def default_repo_for_scope(scope: str = "shared", agent: str | None = None) -> Path:
@@ -64,7 +79,7 @@ def load_config(repo: Path) -> dict[str, Any]:
     path = config_path(repo)
     if not path.exists():
         raise NotInitializedError(f"{repo} is not initialized; run second-memory init first")
-    return frontmatter.parse_mapping(path.read_text(encoding="utf-8"))
+    return {**VECTOR_DEFAULTS, **frontmatter.parse_mapping(path.read_text(encoding="utf-8"))}
 
 
 def write_config(repo: Path, config: dict[str, Any]) -> None:
@@ -85,4 +100,5 @@ def default_config(repo: Path, scope: str, agent: str | None, backend: str) -> d
         "review_max_days": 7,
         "backend": backend,
         "kb_version": KB_VERSION,
+        **VECTOR_DEFAULTS,
     }

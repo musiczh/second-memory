@@ -10,6 +10,7 @@
 - CLI 不调用 LLM，也不依赖数据库、向量库或后台服务。
 - 普通检索与 Consolidation 不发送整个 raw 归档。
 - 每次 apply 使用 session 校验和完整 staging，拒绝过期响应与半写入。
+- 原料向量召回固定使用本地 `fastembed==0.8.0` 与 `BAAI/bge-small-zh-v1.5`，只允许 CPU 的 `CPUExecutionProvider`。普通 apply、search 与 status 只读取已存在的本地模型，只有 `vectors reindex` 可以首次下载模型；模型或缓存缺失时核心链路保持可用并明确降级。
 
 ## 安装
 
