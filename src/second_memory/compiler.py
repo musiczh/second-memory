@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from . import frontmatter
-from .chunking import atomize_body, default_body_groups, sections_from_groups, validate_body_groups
+from .chunking import annotation_hash, atomize_body, default_body_groups, sections_from_groups, validate_body_groups
 from .config import KB_VERSION, default_config, load_config, skill_repo_root, write_config
 from .errors import StaleSessionError, ValidationError
 from .graph import (
@@ -55,7 +55,14 @@ RAW_COMPILED_FIELDS = {
     "compiled", "summary", "summary_segments", "body_sections", "importance", "emotion",
     "mentions", "occurrences", "claims", "belongs_to",
 }
-DEFAULT_GITIGNORE = ".kb/lock\n.kb/transaction/\n.kb/transaction.json\n.kb/transaction.json.tmp\n"
+DEFAULT_GITIGNORE = (
+    ".kb/lock\n"
+    ".kb/transaction/\n"
+    ".kb/transaction.json\n"
+    ".kb/transaction.json.tmp\n"
+    ".kb/vectors/\n"
+    ".kb/eval/\n"
+)
 REBUILD_CONTROL_PATHS = [".gitignore", "AGENTS.md", ".kb/config.yaml"]
 
 
@@ -78,8 +85,17 @@ def initialize(repo: Path, scope: str, agent: str | None, backend: str = "git") 
         (repo / "index.md").write_text("# 知识库索引\n\n暂无编译节点。\n", encoding="utf-8")
     if not (repo / "AGENTS.md").exists():
         (repo / "AGENTS.md").write_text(default_agents_rules(), encoding="utf-8")
-    if not (repo / ".gitignore").exists():
-        (repo / ".gitignore").write_text(DEFAULT_GITIGNORE, encoding="utf-8")
+    gitignore = repo / ".gitignore"
+    current_gitignore = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
+    required_entries = DEFAULT_GITIGNORE.splitlines()
+    existing_entries = set(current_gitignore.splitlines())
+    missing_entries = [entry for entry in required_entries if entry not in existing_entries]
+    if missing_entries:
+        separator = "" if not current_gitignore or current_gitignore.endswith("\n") else "\n"
+        gitignore.write_text(
+            current_gitignore + separator + "".join(f"{entry}\n" for entry in missing_entries),
+            encoding="utf-8",
+        )
     manifest = repo / ".kb" / "manifest.json"
     if not manifest.exists():
         manifest.write_text(json_dumps(empty_manifest()) + "\n", encoding="utf-8")
@@ -201,7 +217,10 @@ def read_raw_by_path(repo: Path, relative: str) -> RawEntry:
         body=body,
         annotations={
             key: meta[key]
-            for key in ["summary", "importance", "emotion", "mentions", "occurrences", "claims", "belongs_to"]
+            for key in [
+                "summary", "summary_segments", "body_sections", "importance", "emotion",
+                "mentions", "occurrences", "claims", "belongs_to",
+            ]
             if key in meta
         },
     )
@@ -962,6 +981,7 @@ def apply_response(repo: Path, response: dict[str, Any], *, command: str) -> dic
                 rebuild=rebuild,
                 session_id=plan.session_id,
                 raw_entries=lookup,
+                raw_documents=raw_documents,
             )
             tx.stage_metadata(index=index, manifest=manifest, pending_rows=next_pending)
             for relative, content in raw_documents.items():
@@ -1776,6 +1796,7 @@ def build_manifest(
     rebuild: dict[str, Any],
     session_id: str,
     raw_entries: dict[str, RawEntry],
+    raw_documents: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     pages: dict[str, dict[str, Any]] = {}
     for path in sorted(wiki_root.rglob("*.md")):
@@ -1791,10 +1812,28 @@ def build_manifest(
                 "sources": sorted(set(str(value) for value in meta.get("sources", []))),
                 "content_hash": sha256_text(path.read_text(encoding="utf-8")),
             }
-    raw_hashes = {
-        raw_id: {"path": relpath(entry.path, repo), "body_hash": sha256_text(entry.body)}
-        for raw_id, entry in sorted(raw_entries.items())
-    }
+    staged = raw_documents or {}
+    raw_hashes: dict[str, dict[str, str]] = {}
+    for raw_id, entry in sorted(raw_entries.items()):
+        relative = relpath(entry.path, repo)
+        if relative in staged:
+            meta, body = frontmatter.parse_document(staged[relative])
+            title = str(meta.get("title", raw_id))
+            annotations = meta
+        else:
+            title = entry.title
+            body = entry.body
+            annotations = entry.annotations
+        raw_hashes[raw_id] = {
+            "path": relative,
+            "body_hash": sha256_text(body),
+            "annotation_hash": annotation_hash(
+                title,
+                str(annotations.get("summary", "")),
+                list(annotations.get("summary_segments", [])),
+                list(annotations.get("body_sections", [])),
+            ),
+        }
     return {
         "schema": 2,
         "kb_version": KB_VERSION,
@@ -2055,8 +2094,20 @@ def manifest_drift(repo: Path) -> list[str]:
             drift.append(str(page_id))
     lookup = raw_lookup(repo)
     for raw_id, info in manifest.get("raw_hashes", {}).items():
-        if raw_id not in lookup or sha256_text(lookup[raw_id].body) != info.get("body_hash"):
-            drift.append(f"raw:{raw_id}")
+        if raw_id not in lookup:
+            drift.append(f"raw:{raw_id}:missing")
+            continue
+        entry = lookup[raw_id]
+        if sha256_text(entry.body) != info.get("body_hash"):
+            drift.append(f"raw:{raw_id}:body")
+        current_annotation_hash = annotation_hash(
+            entry.title,
+            str(entry.annotations.get("summary", "")),
+            list(entry.annotations.get("summary_segments", [])),
+            list(entry.annotations.get("body_sections", [])),
+        )
+        if current_annotation_hash != info.get("annotation_hash"):
+            drift.append(f"raw:{raw_id}:annotation")
     return sorted(drift)
 
 

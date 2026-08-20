@@ -31,6 +31,7 @@ VECTOR_DEFAULTS: dict[str, Any] = {
     "vector_chunk_max": 300,
     "vector_chunk_overlap": 0.15,
 }
+VECTOR_CONFIG_KEYS = tuple(VECTOR_DEFAULTS)
 
 
 def default_repo_for_scope(scope: str = "shared", agent: str | None = None) -> Path:
