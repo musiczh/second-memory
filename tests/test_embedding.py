@@ -20,9 +20,10 @@ def vector(*values: float) -> list[float]:
 
 
 class FakeBackend:
-    def __init__(self, passage: list[float], query: list[float]) -> None:
+    def __init__(self, passage: list[float], query: list[float], *, model_dir: Path) -> None:
         self.passage = passage
         self.query = query
+        self.model = types.SimpleNamespace(_model_dir=str(model_dir))
         self.passage_inputs: list[list[str]] = []
         self.query_inputs: list[list[str]] = []
 
@@ -45,8 +46,8 @@ class EmbeddingProviderTest(unittest.TestCase):
         self.temporary.cleanup()
 
     def provider(self, passage: list[float], query: list[float]) -> tuple[FastEmbedProvider, FakeBackend]:
-        backend = FakeBackend(passage, query)
-        return FastEmbedProvider(backend=backend, model_path=self.model_path), backend
+        backend = FakeBackend(passage, query, model_dir=self.model_path.parent)
+        return FastEmbedProvider(backend=backend), backend
 
     def test_spec_reports_the_pinned_cpu_bge_contract_and_resolved_model_hash(self) -> None:
         provider, _ = self.provider(vector(3.0, 4.0), vector(3.0, 4.0))
@@ -91,16 +92,24 @@ class EmbeddingProviderTest(unittest.TestCase):
                 with self.assertRaisesRegex(EmbeddingError, reason):
                     provider.embed_passages(["原料"])
 
+    def test_rejects_a_model_path_override_and_missing_resolved_model_file(self) -> None:
+        backend = FakeBackend(vector(3.0, 4.0), vector(3.0, 4.0), model_dir=self.model_path.parent)
+        with self.assertRaises(TypeError):
+            FastEmbedProvider(backend=backend, model_path=self.model_path)
+
+        missing_backend = FakeBackend(vector(3.0, 4.0), vector(3.0, 4.0), model_dir=self.model_path.parent / "missing")
+        with self.assertRaisesRegex(EmbeddingError, "missing"):
+            FastEmbedProvider(backend=missing_backend)
+
     def test_fastembed_forces_cpu_local_only_and_uses_passage_and_query_apis(self) -> None:
         created: list[FakeTextEmbedding] = []
         model_dir = self.model_path.parent
 
         class FakeTextEmbedding(FakeBackend):
             def __init__(self, model_name: str, **kwargs: object) -> None:
-                super().__init__(vector(3.0, 4.0), vector(3.0, 4.0))
+                super().__init__(vector(3.0, 4.0), vector(3.0, 4.0), model_dir=model_dir)
                 self.model_name = model_name
                 self.kwargs = kwargs
-                self.model = types.SimpleNamespace(_model_dir=str(model_dir))
                 created.append(self)
 
         fake_module = types.SimpleNamespace(TextEmbedding=FakeTextEmbedding)

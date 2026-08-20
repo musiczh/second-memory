@@ -53,10 +53,9 @@ class FastEmbedProvider:
         *,
         local_files_only: bool = True,
         backend: Any | None = None,
-        model_path: Path | None = None,
     ) -> None:
         self._backend = backend or self._create_backend(local_files_only)
-        resolved_model_path = model_path or _fastembed_v080_model_file(self._backend)
+        resolved_model_path = _fastembed_v080_model_file(self._backend)
         self._spec = EmbeddingSpec(
             provider=self.PROVIDER,
             model=self.MODEL,
