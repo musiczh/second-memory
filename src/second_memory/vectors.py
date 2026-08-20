@@ -95,7 +95,9 @@ def build_vector_units(entry: RawEntry, config: dict[str, Any]) -> list[VectorUn
         previous_end = end
         length = end - start
         if length < minimum and len(entry.body) >= minimum:
-            continue
+            raise VectorCacheError(
+                f"raw body section is shorter than the vector chunk minimum: {entry.id}: section {section_index}"
+            )
         for chunk_start, chunk_end in _chunk_offsets(start, end, target, minimum, maximum, overlap):
             text = entry.body[chunk_start:chunk_end]
             units.append(
@@ -161,7 +163,11 @@ def reindex_vectors(
 
     inputs = _current_inputs(repo, entries, compiled_ids, require_main_manifest=True)
     target = Path(destination) if destination is not None else repo / _CACHE_DIR
-    reused = _reusable_files(repo, embedding_provider.spec, config, inputs, selected) if selected != set(compiled_ids) else {}
+    reused = (
+        _reusable_files(repo, embedding_provider.spec, config, inputs, entries, selected)
+        if selected != set(compiled_ids)
+        else {}
+    )
 
     generated: dict[str, tuple[bytes, int]] = {}
     selected_units: list[tuple[str, list[VectorUnit]]] = []
@@ -469,8 +475,8 @@ def _inspect_cache(repo: Path, cache_root: Path, *, ignore_pending: bool = False
             rows = _read_rows(path, raw_id, info, spec.dimension)
             if len(rows) != int(info.get("unit_count", -1)):
                 raise VectorCacheError(f"vector unit count is invalid: {raw_id}")
-            for row in rows:
-                resolve_vector_unit_text(entries[raw_id], row)
+            expected_units = build_vector_units(entries[raw_id], config)
+            _validate_rows_against_units(rows, expected_units, raw_id)
             unit_count += len(rows)
         if unit_count != int(manifest.get("unit_count", -1)):
             raise VectorCacheError("vector cache total unit count is invalid")
@@ -528,6 +534,7 @@ def _reusable_files(
     spec: EmbeddingSpec,
     config: dict[str, Any],
     inputs: dict[str, dict[str, Any]],
+    entries: dict[str, RawEntry],
     selected: set[str],
 ) -> dict[str, tuple[bytes, int]]:
     root = repo / _CACHE_DIR
@@ -550,6 +557,7 @@ def _reusable_files(
                 continue
             path = root / str(info.get("file", ""))
             rows = _read_rows(path, raw_id, info, spec.dimension)
+            _validate_rows_against_units(rows, build_vector_units(entries[raw_id], config), raw_id)
             reused[raw_id] = (path.read_bytes(), len(rows))
         return reused
     except Exception:
@@ -603,6 +611,37 @@ def _validate_locator(row: dict[str, Any]) -> None:
             raise VectorCacheError("summary vector locator is invalid")
     elif not isinstance(row.get("start"), int) or not isinstance(row.get("end"), int):
         raise VectorCacheError("body vector locator is invalid")
+
+
+def _validate_rows_against_units(
+    rows: Sequence[dict[str, Any]],
+    expected_units: Sequence[VectorUnit],
+    raw_id: str,
+) -> None:
+    if len(rows) != len(expected_units):
+        raise VectorCacheError(f"deterministic vector unit count is invalid: {raw_id}")
+    for index, (row, expected) in enumerate(zip(rows, expected_units, strict=True)):
+        expected_locator = _unit_locator(expected)
+        actual_locator = {
+            key: row[key]
+            for key in ("chunk_id", "raw_id", "kind", "segment_index", "section_index", "start", "end")
+            if key in row
+        }
+        if actual_locator != expected_locator:
+            raise VectorCacheError(f"deterministic vector locator is invalid: {raw_id}: row {index}")
+
+
+def _unit_locator(unit: VectorUnit) -> dict[str, Any]:
+    locator: dict[str, Any] = {
+        "chunk_id": unit.chunk_id,
+        "raw_id": unit.raw_id,
+        "kind": unit.kind,
+    }
+    for key in ("segment_index", "section_index", "start", "end"):
+        value = getattr(unit, key)
+        if value is not None:
+            locator[key] = value
+    return locator
 
 
 def _validated_vector(values: Iterable[object], dimension: int) -> tuple[float, ...]:

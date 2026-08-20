@@ -21,8 +21,9 @@ from second_memory.compiler import (
     manifest_drift,
 )
 from second_memory.config import load_config, write_config
-from second_memory.embedding import EmbeddingSpec
+from second_memory.embedding import EmbeddingError, EmbeddingSpec
 from second_memory.vectors import (
+    VectorCacheError,
     build_vector_units,
     reindex_vectors,
     resolve_vector_unit_text,
@@ -114,6 +115,50 @@ class VectorRepositoryTest(unittest.TestCase):
 
         return raw_lookup(self.repo)[raw_id]
 
+    def compile_sectioned_raw(self, tail_length: int) -> str:
+        body = "甲" * 600 + "乙" * tail_length
+        raw_id = str(add_raw(self.repo, "分段长原料", body, "2026-08-20", ["test"])["raw_id"])
+        request = build_compile_request(self.repo, mode="incremental")
+        entry = request["context"]["raw_entries"][0]
+        atom_ids = [atom["id"] for atom in entry["body_atoms"]]
+        fields = raw_annotation_fields(str(entry["title"]))
+        plan = {
+            "schema_version": 2,
+            "session_id": request["context"]["session_id"],
+            "mode": "incremental",
+            "raw_annotations": [{
+                "raw_id": raw_id,
+                **fields,
+                "body_groups": [atom_ids[:2], atom_ids[2:]],
+                "importance": 3,
+                "emotion": "",
+                "mentions": [],
+                "occurrences": [],
+                "claims": [],
+            }],
+            "node_actions": [],
+            "out_edges": [],
+            "candidates": [],
+            "consolidation_memo": request["context"]["consolidation_memo"],
+        }
+        apply_response(self.repo, plan, command="compile")
+        return raw_id
+
+    def rewrite_cached_rows(self, raw_id: str, mutate) -> None:
+        manifest_path = self.repo / ".kb/vectors/manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        info = manifest["raws"][raw_id]
+        jsonl_path = self.repo / ".kb/vectors" / info["file"]
+        rows = [json.loads(line) for line in jsonl_path.read_text(encoding="utf-8").splitlines()]
+        mutate(rows)
+        content = "".join(
+            json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
+            for row in rows
+        )
+        jsonl_path.write_text(content, encoding="utf-8")
+        info["file_hash"] = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
+
     def test_units_are_stable_locators_and_body_chunks_never_cross_sections(self) -> None:
         body = "甲" * 600 + "乙" * 50
         raw_id = str(add_raw(self.repo, "分段长原料", body, "2026-08-20", ["test"])["raw_id"])
@@ -162,6 +207,15 @@ class VectorRepositoryTest(unittest.TestCase):
 
         body_units = [unit for unit in units if unit.kind == "body"]
         self.assertEqual([self.raw_entry(raw_id).body], [unit.text for unit in body_units])
+
+    def test_non_short_raw_rejects_a_persisted_section_below_the_minimum(self) -> None:
+        raw_id = self.compile_sectioned_raw(20)
+
+        with self.assertRaisesRegex(VectorCacheError, "section.*minimum"):
+            build_vector_units(self.raw_entry(raw_id), load_config(self.repo))
+        with self.assertRaisesRegex(VectorCacheError, "section.*minimum"):
+            reindex_vectors(self.repo, FakeProvider())
+        self.assertFalse((self.repo / ".kb/vectors").exists())
 
     def test_reindex_writes_text_free_jsonl_and_a_complete_fingerprinted_manifest(self) -> None:
         raw_id = self.compile_raws([("缓存结构", "甲" * 80 + "。" + "乙" * 80 + "。")])[0]
@@ -232,6 +286,33 @@ class VectorRepositoryTest(unittest.TestCase):
         self.assertEqual([], result.units)
         self.assertEqual([], result.raws)
 
+    def test_status_rejects_body_locator_that_crosses_a_persisted_section(self) -> None:
+        raw_id = self.compile_sectioned_raw(50)
+        provider = FakeProvider()
+        reindex_vectors(self.repo, provider)
+
+        def cross_section(rows: list[dict[str, object]]) -> None:
+            unit = next(row for row in rows if row.get("kind") == "body" and row.get("end") == 600)
+            unit["end"] = 610
+
+        self.rewrite_cached_rows(raw_id, cross_section)
+
+        self.assertEqual("corrupt", vector_status(self.repo).status)
+        result = search_vectors(self.repo, "查询", provider)
+        self.assertEqual("corrupt", result.status)
+        self.assertEqual([], result.units)
+        self.assertEqual([], result.raws)
+
+    def test_status_rejects_tampered_chunk_id_even_when_file_hash_matches(self) -> None:
+        raw_id = self.compile_raws([("篡改块标识", "篡改块标识正文" * 10)])[0]
+        provider = FakeProvider()
+        reindex_vectors(self.repo, provider)
+
+        self.rewrite_cached_rows(raw_id, lambda rows: rows[0].__setitem__("chunk_id", "chunk-tampered"))
+
+        self.assertEqual("corrupt", vector_status(self.repo).status)
+        self.assertEqual([], search_vectors(self.repo, "查询", provider).units)
+
     def test_config_drift_and_pending_or_disabled_state_never_initialize_a_provider(self) -> None:
         raw_id = self.compile_raws([("状态边界", "状态边界正文" * 10)])[0]
         reindex_vectors(self.repo, FakeProvider())
@@ -266,6 +347,39 @@ class VectorRepositoryTest(unittest.TestCase):
         self.assertEqual([], result.units)
         self.assertEqual([], result.raws)
 
+    def test_provider_constructor_enforces_reindex_and_search_local_file_boundaries(self) -> None:
+        self.compile_raws([("构造边界", "构造边界正文" * 10)])
+        offline_destination = self.repo / ".kb/offline-vectors"
+        online_destination = self.repo / ".kb/online-vectors"
+
+        with patch("second_memory.vectors.FastEmbedProvider", return_value=FakeProvider()) as constructor:
+            reindex_vectors(self.repo, offline=True, destination=offline_destination)
+        constructor.assert_called_once_with(local_files_only=True)
+
+        with patch("second_memory.vectors.FastEmbedProvider", return_value=FakeProvider()) as constructor:
+            reindex_vectors(self.repo, destination=online_destination)
+        constructor.assert_called_once_with(local_files_only=False)
+
+        reindex_vectors(self.repo, FakeProvider())
+        with patch("second_memory.vectors.FastEmbedProvider", return_value=FakeProvider()) as constructor:
+            result = search_vectors(self.repo, "查询")
+        constructor.assert_called_once_with(local_files_only=True)
+        self.assertEqual("ready", result.status)
+
+    def test_offline_reindex_fails_without_a_local_model_and_keeps_destination_absent(self) -> None:
+        self.compile_raws([("离线缺模型", "离线缺模型正文" * 10)])
+        destination = self.repo / ".kb/offline-missing"
+
+        with patch(
+            "second_memory.vectors.FastEmbedProvider",
+            side_effect=EmbeddingError("local model missing"),
+        ) as constructor:
+            with self.assertRaisesRegex(EmbeddingError, "local model missing"):
+                reindex_vectors(self.repo, offline=True, destination=destination)
+
+        constructor.assert_called_once_with(local_files_only=True)
+        self.assertFalse(destination.exists())
+
     def test_search_uses_stable_score_order_then_limits_units_and_deduplicates_raws(self) -> None:
         raw_ids = self.compile_raws([
             (("低分" if i == 5 else "高分") + f"排序原料{i:02d}", ("低分" if i == 5 else "高分") + "正文内容" * 15)
@@ -284,6 +398,28 @@ class VectorRepositoryTest(unittest.TestCase):
         self.assertNotIn(raw_ids[5], {unit.raw_id for unit in result.units})
         self.assertEqual(len(result.raws), len({item["raw_id"] for item in result.raws}))
         self.assertEqual([item["raw_id"] for item in result.raws], list(dict.fromkeys(unit.raw_id for unit in result.units))[:5])
+
+    def test_search_orders_distinct_scores_before_the_thirty_unit_scan_limit(self) -> None:
+        markers = [f"分数{i:02d}" for i in range(12)]
+        self.compile_raws([(marker, marker + "正文内容" * 15) for marker in markers])
+        config = load_config(self.repo)
+        config["vector_unit_limit"] = 40
+        config["vector_raw_limit"] = 40
+        write_config(self.repo, config)
+        scores = {marker: 0.99 - index * 0.04 for index, marker in enumerate(markers)}
+        provider = FakeProvider(scores)
+        reindex_vectors(self.repo, provider)
+
+        result = search_vectors(self.repo, "排序查询", provider)
+
+        actual_scores = [float(unit.score or 0.0) for unit in result.units]
+        self.assertEqual("ready", result.status)
+        self.assertEqual(30, len(result.units))
+        self.assertEqual(sorted(actual_scores, reverse=True), actual_scores)
+        self.assertGreater(actual_scores[0], actual_scores[-1])
+        for score in set(actual_scores):
+            tied_ids = [unit.chunk_id for unit in result.units if unit.score == score]
+            self.assertEqual(sorted(tied_ids), tied_ids)
 
     def test_destination_build_is_complete_and_does_not_replace_the_live_cache(self) -> None:
         self.compile_raws([("目标目录", "目标目录正文" * 12)])
