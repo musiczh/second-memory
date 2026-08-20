@@ -63,6 +63,16 @@ class BodyGroupTest(unittest.TestCase):
         groups = default_body_groups(atoms)
         self.assertEqual([atom.id for atom in atoms], [atom_id for group in groups for atom_id in group])
 
+    def test_rejects_duplicate_and_omitted_atom_groups(self) -> None:
+        atoms = atomize_body("甲" * 80 + "。" + "乙" * 80 + "。" + "丙" * 80 + "。")
+
+        with self.subTest("duplicate"):
+            with self.assertRaisesRegex(ValueError, "cover every atom exactly once"):
+                validate_body_groups(atoms, [[atoms[0].id, atoms[1].id], [atoms[1].id, atoms[2].id]])
+        with self.subTest("omitted"):
+            with self.assertRaisesRegex(ValueError, "cover every atom exactly once"):
+                validate_body_groups(atoms, [[atoms[0].id, atoms[1].id]])
+
     def test_default_groups_absorb_a_short_tail_when_the_maximum_allows_it(self) -> None:
         atoms = atomize_body("甲" * 240 + "。" + "乙" * 20 + "。")
 

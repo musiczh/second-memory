@@ -566,6 +566,37 @@ class CompilePlanSemanticsTest(unittest.TestCase):
         with self.assertRaisesRegex(ValidationError, "body_groups"):
             validate_compile_plan(plan, [self.raw], {RAW_ID: self.raw})
 
+    def test_raw_annotation_requires_non_empty_summary_segments(self) -> None:
+        for label, value in [("missing", None), ("empty", [])]:
+            with self.subTest(label=label):
+                plan = compile_plan(create_action())
+                if value is None:
+                    del plan.raw_annotations[0]["summary_segments"]
+                else:
+                    plan.raw_annotations[0]["summary_segments"] = value
+
+                with self.assertRaisesRegex(ValidationError, "summary_segments"):
+                    validate_compile_plan(plan, [self.raw], {RAW_ID: self.raw})
+
+    def test_raw_annotation_enforces_summary_segment_bounds_for_long_body(self) -> None:
+        long_raw = replace(self.raw, body="甲" * 50)
+        for label, segment, message in [
+            ("below-minimum", "甲" * 49, "at least 50"),
+            ("above-maximum", "甲" * 301, "1 to 300"),
+        ]:
+            with self.subTest(label=label):
+                plan = compile_plan(create_action())
+                plan.raw_annotations[0]["summary_segments"] = [segment]
+
+                with self.assertRaisesRegex(ValidationError, message):
+                    validate_compile_plan(plan, [long_raw], {RAW_ID: long_raw})
+
+    def test_raw_annotation_allows_short_summary_segment_for_short_body(self) -> None:
+        plan = compile_plan(create_action())
+        plan.raw_annotations[0]["summary_segments"] = ["短摘要"]
+
+        validate_compile_plan(plan, [self.raw], {RAW_ID: self.raw})
+
     def test_event_semantics_requires_every_fixed_field(self) -> None:
         required = [
             "subject_role",
