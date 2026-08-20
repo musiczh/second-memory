@@ -99,7 +99,7 @@ git commit -m "feat(compile): 增加原料语义分段协议" -m "将 Raw body �
 - fake backend 下 `embed_passages`／`embed_query` 返回 shape 正确的 512 维 float32 有限向量并做防御性 L2 归一化。
 - 维度错误、NaN／Inf、零范数均抛出明确向量错误。
 - `FastEmbedProvider(local_files_only=True)` 不允许下载，强制 `providers=["CPUExecutionProvider"]`，passage/query 分别调用 FastEmbed 对应 API。
-- 默认配置包含技术方案列出的 10 个向量字段，`KB_VERSION == "2.5.0"`。
+- 默认配置包含技术方案列出的 12 个向量字段，`KB_VERSION == "2.5.0"`。
 
 运行：
 
