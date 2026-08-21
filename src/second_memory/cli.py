@@ -34,16 +34,19 @@ from .compiler import (
     transaction_state,
     version_drift,
 )
-from .config import KB_VERSION, resolve_repo
+from .config import KB_VERSION, load_config, resolve_repo
 from .errors import SecondMemoryError, StaleSessionError, ValidationError
 from .recap import build_recap_request
-from .retriever import search_level1, search_level2_request
+from .retriever import search_level1, search_level2_request, vector_supplement
 from .reviewer import review_request
 from .store.git_store import GitStorage
 from .utils import json_dumps
+from .vectors import reindex_vectors, search_vectors, vector_status
 from .wiki import build_wiki_html, build_wiki_model
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
+vectors_app = typer.Typer(no_args_is_help=True, add_completion=False)
+app.add_typer(vectors_app, name="vectors")
 
 
 def emit(command: str, data: object, json_output: bool = True) -> None:
@@ -285,6 +288,35 @@ def search(
         fail(command, exc, json_output=True)
 
 
+@vectors_app.command("reindex")
+def vectors_reindex(
+    offline: bool = typer.Option(False, "--offline", help="Only use an already cached local model."),
+    repo: Optional[str] = typer.Option(None, "--repo"),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    command = "vectors reindex"
+    try:
+        target = resolve_repo(repo)
+        state = reindex_vectors(target, offline=offline)
+        emit(command, _vector_state_payload(target, state), json_output=True)
+    except Exception as exc:
+        fail(command, exc, json_output=True)
+
+
+@vectors_app.command("search")
+def vectors_search(
+    query: str = typer.Option(..., "--query"),
+    repo: Optional[str] = typer.Option(None, "--repo"),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    command = "vectors search"
+    try:
+        target = resolve_repo(repo)
+        emit(command, vector_supplement(target, search_vectors(target, query)), json_output=True)
+    except Exception as exc:
+        fail(command, exc, json_output=True)
+
+
 @app.command()
 def review(
     range_name: Optional[str] = typer.Option(None, "--range"),
@@ -411,6 +443,7 @@ def status(
         manifest = load_manifest(target)
         consolidation = consolidation_state(manifest)
         semantic_quality = build_wiki_model(target)["health"]["semantic_quality"]
+        vector_state = vector_status(target)
         data = {
             "repo": str(target),
             "pending": len(pending),
@@ -431,10 +464,25 @@ def status(
             "transaction_recovery": transaction_state(target),
             "rebuild": rebuild_state(target),
             "semantic_quality": semantic_quality,
+            "vectors": _vector_state_payload(target, vector_state),
         }
         emit(command, data, json_output=True)
     except Exception as exc:
         fail(command, exc, json_output=True)
+
+
+def _vector_state_payload(repo: Path, state: object) -> dict[str, object]:
+    manifest = getattr(state, "manifest", None) or {}
+    config = load_config(repo)
+    return {
+        "cache_state": getattr(state, "status"),
+        "provider": manifest.get("provider", config["vector_provider"]),
+        "model": manifest.get("model", config["vector_model"]),
+        "dimension": manifest.get("dimension", config["vector_dimension"]),
+        "raw_count": manifest.get("raw_count", 0),
+        "unit_count": manifest.get("unit_count", 0),
+        "reason": getattr(state, "reason"),
+    }
 
 
 @app.command()

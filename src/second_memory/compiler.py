@@ -2223,7 +2223,7 @@ def determine_update_mode(repo: Path) -> dict[str, Any]:
         repair_issues = quality_repair_issues(repo)
     else:
         mode = "noop"
-    return {
+    decision = {
         "mode": mode,
         "pending": len(pending),
         "drift": drift,
@@ -2233,6 +2233,10 @@ def determine_update_mode(repo: Path) -> dict[str, Any]:
         "quality_repair": quality_repair,
         **repair_issues,
     }
+    vector = vector_status(repo)
+    decision["vector_reindex_required"] = vector.status not in {"ready", "disabled"}
+    decision["vector"] = {"status": vector.status, "reason": vector.reason}
+    return decision
 
 
 def commit_message(command: str, mode: str, raw_ids: list[str], pages: list[str]) -> str:

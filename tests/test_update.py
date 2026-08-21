@@ -12,7 +12,8 @@ from typer.testing import CliRunner
 
 from second_memory import cli as cli_module
 from second_memory.cli import app
-from second_memory.compiler import load_manifest
+from second_memory.compiler import determine_update_mode, load_manifest
+from second_memory.vectors import VectorCacheState
 from second_memory.errors import SecondMemoryError
 from second_memory.store.git_store import GitStorage
 from second_memory.utils import json_dumps
@@ -151,6 +152,14 @@ class UpdateVersionRoutingTest(RepositoryTestCase):
         self.assertFalse(data["version_changed"])
         self.assertTrue(data["code_update"]["updated"])
         self.assertEqual(UPDATED_CODE_UPDATE, data["code_update"])
+
+    def test_vector_cache_state_only_adds_reindex_hint_without_changing_update_mode(self) -> None:
+        with patch("second_memory.compiler.vector_status", return_value=VectorCacheState("stale", "Raw input changed")):
+            decision = determine_update_mode(self.repo)
+
+        self.assertEqual("noop", decision["mode"])
+        self.assertTrue(decision["vector_reindex_required"])
+        self.assertEqual({"status": "stale", "reason": "Raw input changed"}, decision["vector"])
 
     def test_database_version_mismatch_routes_to_rebuild(self) -> None:
         manifest_path = self.repo / ".kb" / "manifest.json"

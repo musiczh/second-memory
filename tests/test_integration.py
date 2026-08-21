@@ -34,7 +34,8 @@ from second_memory.compiler import (
 )
 from second_memory.config import load_config, write_config
 from second_memory.errors import StaleSessionError, ValidationError
-from second_memory.retriever import search_level1, search_level2_request
+from second_memory.retriever import search_level1, search_level2_request, vector_supplement
+from second_memory.vectors import VectorSearchResult, VectorUnit
 from second_memory.reviewer import collect_timeline_pages
 from second_memory.search import rg_hits
 from second_memory.store.git_store import GitStorage
@@ -357,6 +358,66 @@ class CompileIntegrationTest(RepositoryTestCase):
         self.assertLessEqual(len(level2["context"]["source_snippets"][0]["snippet"]), 500)
         timeline = collect_timeline_pages(self.repo, range_name=None, on_this_day=None, start_date="2026-08-03", end_date="2026-08-03", max_days=7)
         self.assertEqual([], timeline)
+
+    def test_search_level1_preserves_keyword_payload_and_adds_bounded_raw_supplement(self) -> None:
+        raw_id = self.add("向量补充检索", "完整 Raw 正文不应作为补充结果返回给调用方。", "2026-08-03")
+        self.apply_pending(states={raw_id: "向量补充只提供可追溯的命中单元"})
+        baseline = search_level1(self.repo, "向量补充")
+        self.assertEqual({"status", "reason", "units", "raws"}, set(baseline["supplemental_raw"]))
+        self.assertEqual([], baseline["supplemental_raw"]["units"])
+        self.assertEqual([], baseline["supplemental_raw"]["raws"])
+        unit = VectorUnit(
+            chunk_id="unit-1", raw_id=raw_id, kind="body", text="完整 Raw 正文不应", start=0, end=10, score=0.91,
+        )
+        vector = VectorSearchResult("ready", "vector cache is ready", [unit], [{"raw_id": raw_id, "score": 0.91}])
+
+        with patch("second_memory.retriever.search_vectors", return_value=vector):
+            result = search_level1(self.repo, "向量补充")
+
+        self.assertEqual(
+            json.dumps({key: baseline[key] for key in ("query", "candidates", "hits")}, ensure_ascii=False),
+            json.dumps({key: result[key] for key in ("query", "candidates", "hits")}, ensure_ascii=False),
+        )
+        supplemental = result["supplemental_raw"]
+        self.assertEqual({"status", "reason", "units", "raws"}, set(supplemental))
+        self.assertEqual("ready", supplemental["status"])
+        self.assertEqual("完整 Raw 正文不应", supplemental["units"][0]["snippet"])
+        self.assertNotIn("完整 Raw 正文不应作为补充结果返回给调用方。", json.dumps(supplemental, ensure_ascii=False))
+        self.assertEqual(raw_id, supplemental["raws"][0]["raw_id"])
+        self.assertEqual(0.91, supplemental["raws"][0]["best_score"])
+
+    def test_search_level2_keeps_candidate_pages_and_adds_vector_evidence(self) -> None:
+        raw_id = self.add("二级向量证据", "二级请求只应携带命中单元，而非整篇原料正文。", "2026-08-03")
+        self.apply_pending(states={raw_id: "二级请求追加向量可追溯证据"})
+        unit = VectorUnit(
+            chunk_id="unit-2", raw_id=raw_id, kind="body", text="二级请求只应携带命中单元", start=0, end=12, score=0.88,
+        )
+        with patch(
+            "second_memory.retriever.search_vectors",
+            return_value=VectorSearchResult("ready", "ready", [unit], [{"raw_id": raw_id, "score": 0.88}]),
+        ):
+            request = search_level2_request(self.repo, "二级向量")
+
+        context = request["context"]
+        self.assertTrue(context["candidate_pages"])
+        self.assertEqual("unit-2", context["vector_units"][0]["chunk_id"])
+        self.assertEqual(raw_id, context["vector_raws"][0]["raw_id"])
+        self.assertNotIn("二级请求只应携带命中单元，而非整篇原料正文。", json.dumps(context["vector_raws"], ensure_ascii=False))
+
+    def test_vector_supplement_bounds_raw_metadata_to_vector_raw_results(self) -> None:
+        result = VectorSearchResult(
+            "ready",
+            "ready",
+            [
+                VectorUnit(chunk_id="unit-1", raw_id="raw-1", kind="summary", text="一", score=0.9),
+                VectorUnit(chunk_id="unit-2", raw_id="raw-2", kind="summary", text="二", score=0.8),
+            ],
+            [{"raw_id": "raw-1", "score": 0.9}],
+        )
+
+        supplemental = vector_supplement(self.repo, result)
+
+        self.assertEqual(["raw-1"], [raw["raw_id"] for raw in supplemental["raws"]])
 
     def test_rg_hits_parses_single_index_file_with_colons_in_text(self) -> None:
         completed = type("Completed", (), {
