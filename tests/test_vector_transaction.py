@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -190,6 +191,103 @@ class KnowledgeVectorTransactionTest(VectorTestRepository):
 
         self.assertEqual(original, self.cache_bytes(live))
 
+    def test_corrupt_journal_and_missing_marker_restore_crash_between_vector_replaces(self) -> None:
+        self.compile_without_vectors()
+        live = self.repo / ".kb/vectors"
+        reindex_vectors(self.repo, FakeProvider(axis=0))
+        original = self.cache_bytes(live)
+        tx = KnowledgeTransaction(self.repo, "session-vector-between-replaces")
+        tx.prepare(include_vectors=True)
+        reindex_vectors(self.repo, FakeProvider(axis=1), destination=tx.vectors_next)
+        tx._write_journal("promoting")
+        os.replace(live, tx.vectors_previous)
+        tx.journal.write_text("{", encoding="utf-8")
+        tx.vectors_marker.unlink()
+
+        self.assertEqual("rolled_back_corrupt_journal", recover_transaction(self.repo))
+
+        self.assertEqual(original, self.cache_bytes(live))
+
+    def test_corrupt_journal_and_marker_remove_promoted_cache_when_none_existed(self) -> None:
+        self.compile_without_vectors()
+        tx = KnowledgeTransaction(self.repo, "session-vector-first-corrupt")
+        tx.prepare(include_vectors=True)
+        reindex_vectors(self.repo, FakeProvider(), destination=tx.vectors_next)
+        tx._write_journal("promoting")
+        os.replace(tx.vectors_next, self.repo / ".kb/vectors")
+        tx.journal.write_text("{", encoding="utf-8")
+        tx.vectors_marker.write_text("{", encoding="utf-8")
+
+        self.assertEqual("rolled_back_corrupt_journal", recover_transaction(self.repo))
+
+        self.assertFalse((self.repo / ".kb/vectors").exists())
+
+    def test_vector_replaces_fsync_both_parent_directories_before_core_switch(self) -> None:
+        self.compile_without_vectors()
+        live = self.repo / ".kb/vectors"
+        reindex_vectors(self.repo, FakeProvider(axis=0))
+        tx = KnowledgeTransaction(self.repo, "session-vector-durable-swap")
+        tx.prepare(include_vectors=True)
+        self.stage_current_core(tx)
+        reindex_vectors(self.repo, FakeProvider(axis=1), destination=tx.vectors_next)
+        events: list[tuple[str, Path, Path | None]] = []
+        real_replace = os.replace
+
+        def recording_replace(source, destination) -> None:
+            events.append(("replace", Path(source), Path(destination)))
+            real_replace(source, destination)
+
+        def recording_fsync(path: Path) -> None:
+            events.append(("fsync", Path(path), None))
+
+        with patch("second_memory.transaction.os.replace", side_effect=recording_replace), patch(
+            "second_memory.transaction._fsync_directory",
+            side_effect=recording_fsync,
+        ):
+            tx.promote()
+
+        old_to_previous = events.index(("replace", live, tx.vectors_previous))
+        next_to_live = events.index(("replace", tx.vectors_next, live))
+        core_switch = events.index(("replace", self.repo / "wiki", tx.wiki_previous))
+        self.assertIn(("fsync", live.parent, None), events[old_to_previous + 1 : next_to_live])
+        self.assertIn(("fsync", tx.root, None), events[old_to_previous + 1 : next_to_live])
+        self.assertIn(("fsync", live.parent, None), events[next_to_live + 1 : core_switch])
+        self.assertIn(("fsync", tx.root, None), events[next_to_live + 1 : core_switch])
+
+    def test_vectors_marker_fsyncs_file_then_atomically_replaces_then_fsyncs_parent(self) -> None:
+        tx = KnowledgeTransaction(self.repo, "session-vector-marker-durable")
+        tx.root.mkdir(parents=True)
+        events: list[tuple[str, Path | None]] = []
+        real_replace = os.replace
+        real_fsync = os.fsync
+
+        def recording_replace(source, destination) -> None:
+            events.append(("replace", Path(destination)))
+            real_replace(source, destination)
+
+        def recording_fsync(descriptor: int) -> None:
+            events.append(("fsync", None))
+            real_fsync(descriptor)
+
+        def recording_directory_fsync(path: Path) -> None:
+            events.append(("directory_fsync", Path(path)))
+
+        with patch("second_memory.transaction.os.replace", side_effect=recording_replace), patch(
+            "second_memory.transaction.os.fsync",
+            side_effect=recording_fsync,
+        ), patch(
+            "second_memory.transaction._fsync_directory",
+            side_effect=recording_directory_fsync,
+        ):
+            tx._write_vectors_marker()
+
+        file_fsync = events.index(("fsync", None))
+        replace = events.index(("replace", tx.vectors_marker))
+        directory_fsync = events.index(("directory_fsync", tx.root))
+        self.assertLess(file_fsync, replace)
+        self.assertLess(replace, directory_fsync)
+        self.assertFalse(tx.vectors_marker.with_suffix(".json.tmp").exists())
+
 
 class GitKnowledgeVectorRecoveryTest(VectorTestRepository):
     backend = "git"
@@ -218,6 +316,24 @@ class GitKnowledgeVectorRecoveryTest(VectorTestRepository):
         tx.journal.write_text("{", encoding="utf-8")
 
         self.assertEqual("rolled_back_corrupt_journal", recover_transaction(self.repo))
+
+        self.assertEqual(original, self.cache_bytes(self.repo / ".kb/vectors"))
+
+    def test_corrupt_journal_and_marker_restore_previous_cache(self) -> None:
+        tx, original = self.prepare_promoted_vector_transaction("session-vector-corrupt-marker")
+        tx.journal.write_text("{", encoding="utf-8")
+        tx.vectors_marker.write_text("{", encoding="utf-8")
+
+        self.assertEqual("rolled_back_corrupt_journal", recover_transaction(self.repo))
+
+        self.assertEqual(original, self.cache_bytes(self.repo / ".kb/vectors"))
+
+    def test_committed_recovery_replaces_corrupt_live_with_previous_cache(self) -> None:
+        tx, original = self.prepare_promoted_vector_transaction("session-vector-committed-corrupt")
+        (self.repo / ".kb/vectors/manifest.json").write_text("{", encoding="utf-8")
+        tx.mark_committed("commit-vector-corrupt")
+
+        self.assertEqual("finalized", recover_transaction(self.repo))
 
         self.assertEqual(original, self.cache_bytes(self.repo / ".kb/vectors"))
 
@@ -344,6 +460,36 @@ class IncrementalVectorApplyTest(VectorTestRepository):
         self.assertIn("destination is not ready", result["vector_reason"])
         self.assertFalse((self.repo / ".kb/vectors").exists())
 
+    def test_next_to_live_replace_failure_keeps_old_cache_and_completes_core_apply(self) -> None:
+        _, first_plan = self.add_plan("交换失败基线", "交换失败基线原料正文" * 20)
+        with patch("second_memory.vectors.FastEmbedProvider", return_value=FakeProvider(axis=0)):
+            apply_response(self.repo, first_plan, command="compile")
+        live = self.repo / ".kb/vectors"
+        original = self.cache_bytes(live)
+        raw_id, second_plan = self.add_plan("交换失败增量", "乙" * 599)
+        real_replace = os.replace
+        failure_count = 0
+
+        def fail_next_to_live_once(source, destination) -> None:
+            nonlocal failure_count
+            if Path(source) == self.repo / ".kb/transaction/vectors.next" and Path(destination) == live:
+                failure_count += 1
+                raise OSError("next to live failed")
+            real_replace(source, destination)
+
+        with patch("second_memory.vectors.FastEmbedProvider", return_value=FakeProvider(axis=1)), patch(
+            "second_memory.transaction.os.replace",
+            side_effect=fail_next_to_live_once,
+        ):
+            result = apply_response(self.repo, second_plan, command="compile")
+
+        self.assertEqual(1, failure_count)
+        self.assertIn(raw_id, load_manifest(self.repo)["compiled_raw"])
+        self.assertEqual([], read_pending(self.repo))
+        self.assertEqual(original, self.cache_bytes(live))
+        self.assertEqual("stale", result["vector_status"])
+        self.assertIn("next to live failed", result["vector_reason"])
+
 
 class RawOnlyRebuildVectorTest(VectorTestRepository):
     def seed_compiled_raw(self) -> None:
@@ -422,6 +568,31 @@ class RawOnlyRebuildVectorTest(VectorTestRepository):
         self.assertEqual("complete", rebuild_state(self.repo)["phase"])
         self.assertEqual("pending", result["vector_status"])
         self.assertIn("rebuild vectors failed", result["vector_reason"])
+
+    def test_workspace_cleanup_failure_still_reindexes_once_and_returns_cleanup_error(self) -> None:
+        self.seed_compiled_raw()
+        first_request = build_rebuild_request(self.repo)
+        workspace = rebuild_workspace(self.repo)
+        real_rmtree = shutil.rmtree
+
+        def fail_workspace_cleanup(path, *args, **kwargs) -> None:
+            if Path(path) == workspace:
+                raise OSError("workspace cleanup failed")
+            real_rmtree(path, *args, **kwargs)
+
+        with patch("second_memory.compiler.shutil.rmtree", side_effect=fail_workspace_cleanup), patch(
+            "second_memory.compiler.reindex_vectors",
+            return_value=VectorCacheState("ready", "rebuilt once"),
+        ) as reindex:
+            apply_rebuild_response(self.repo, self.replay_plan(first_request))
+            tail_request = build_rebuild_request(self.repo)
+            result = apply_rebuild_response(self.repo, self.consolidation_plan(tail_request))
+
+        reindex.assert_called_once_with(self.repo, offline=True)
+        self.assertTrue(result["rebuild_complete"])
+        self.assertEqual("complete", load_manifest(self.repo)["rebuild"]["phase"])
+        self.assertEqual("ready", result["vector_status"])
+        self.assertIn("workspace cleanup failed", result["cleanup_error"])
 
 
 if __name__ == "__main__":

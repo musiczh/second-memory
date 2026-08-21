@@ -10,6 +10,21 @@ from typing import Any
 from .utils import json_dumps
 
 
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _replace_directory(source: Path, target: Path) -> None:
+    os.replace(source, target)
+    _fsync_directory(source.parent)
+    if target.parent != source.parent:
+        _fsync_directory(target.parent)
+
+
 class KnowledgeTransaction:
     def __init__(self, repo: Path, session_id: str) -> None:
         self.repo = repo
@@ -20,6 +35,7 @@ class KnowledgeTransaction:
         self.wiki_previous = self.root / "wiki.previous"
         self.vectors_next = self.root / "vectors.next"
         self.vectors_previous = self.root / "vectors.previous"
+        self.vectors_failed = self.root / "vectors.failed"
         self.vectors_marker = self.root / "vectors.state.json"
         self.backup = self.root / "backup"
         self.staged = self.root / "staged"
@@ -63,9 +79,12 @@ class KnowledgeTransaction:
             raise RuntimeError("cannot discard vectors after cache promotion has started")
         if self.vectors_next.exists():
             shutil.rmtree(self.vectors_next)
+            _fsync_directory(self.root)
         self._vectors_included = False
         self._vectors_switched = False
-        self._write_vectors_marker()
+        if self.vectors_marker.exists():
+            self.vectors_marker.unlink()
+            _fsync_directory(self.root)
         self._write_journal("prepared")
 
     def stage_metadata(self, *, index: str, manifest: dict[str, Any], pending_rows: list[dict[str, Any]]) -> None:
@@ -100,6 +119,8 @@ class KnowledgeTransaction:
                     f"vector transaction destination is not ready: {state.status}: {state.reason}"
                 )
         self._write_journal("promoting")
+        if self._vectors_included:
+            self._promote_vectors()
         wiki = self.repo / "wiki"
         if wiki.exists():
             os.replace(wiki, self.wiki_previous)
@@ -125,14 +146,6 @@ class KnowledgeTransaction:
                     os.chmod(target, 0o444)
                 except OSError:
                     pass
-        if self._vectors_included:
-            vectors = self.repo / ".kb" / "vectors"
-            if vectors.exists():
-                os.replace(vectors, self.vectors_previous)
-            os.replace(self.vectors_next, vectors)
-            self._vectors_switched = True
-            self._write_vectors_marker()
-            self._write_journal("promoting")
         self._write_journal("promoted")
 
     def mark_committed(self, commit: str | None) -> None:
@@ -167,10 +180,11 @@ class KnowledgeTransaction:
         self.finalize()
 
     def finalize(self) -> None:
-        vectors = self.repo / ".kb" / "vectors"
-        if self.vectors_previous.exists() and not vectors.exists():
-            vectors.parent.mkdir(parents=True, exist_ok=True)
-            os.replace(self.vectors_previous, vectors)
+        if self.vectors_previous.exists():
+            from .vectors import vector_status
+
+            if not vector_status(self.repo).ready:
+                self._restore_previous_vectors()
         if self.root.exists():
             shutil.rmtree(self.root)
         if self.journal.exists():
@@ -199,36 +213,119 @@ class KnowledgeTransaction:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, self.journal)
-        directory = os.open(self.journal.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
+        _fsync_directory(self.journal.parent)
 
     def _write_vectors_marker(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
-        self.vectors_marker.write_text(
-            json_dumps({
+        temporary = self.vectors_marker.with_suffix(".json.tmp")
+        with temporary.open("w", encoding="utf-8") as handle:
+            handle.write(json_dumps({
                 "included": self._vectors_included,
                 "original_existed": self._vectors_original_existed,
                 "switched": self._vectors_switched,
-            }) + "\n",
-            encoding="utf-8",
-        )
+            }) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, self.vectors_marker)
+        _fsync_directory(self.root)
 
-    def _load_vectors_state(self, value: object) -> None:
-        state = value if isinstance(value, dict) else {}
-        self._vectors_included = bool(state.get("included", False))
-        self._vectors_original_existed = bool(state.get("original_existed", False))
-        self._vectors_switched = bool(state.get("switched", False))
+    def _load_vectors_state(self, value: object) -> bool:
+        if not isinstance(value, dict):
+            return False
+        keys = ("included", "original_existed", "switched")
+        if any(not isinstance(value.get(key), bool) for key in keys):
+            return False
+        self._vectors_included = value["included"]
+        self._vectors_original_existed = value["original_existed"]
+        self._vectors_switched = value["switched"]
+        return True
 
-    def _load_vectors_marker(self) -> None:
-        if not self.vectors_marker.exists():
-            return
+    def _load_vectors_marker(self) -> bool:
+        marker_present = self.vectors_marker.exists()
+        if not marker_present:
+            self._infer_vectors_state(marker_present=False)
+            return False
         try:
-            self._load_vectors_state(json.loads(self.vectors_marker.read_text(encoding="utf-8")))
+            if self._load_vectors_state(json.loads(self.vectors_marker.read_text(encoding="utf-8"))):
+                return True
         except (OSError, json.JSONDecodeError):
             pass
+        self._infer_vectors_state(marker_present=True)
+        return False
+
+    def _infer_vectors_state(self, *, marker_present: bool) -> None:
+        vectors = self.repo / ".kb" / "vectors"
+        has_next = self.vectors_next.exists()
+        has_previous = self.vectors_previous.exists()
+        has_failed = self.vectors_failed.exists()
+        has_live = vectors.exists()
+        self._vectors_included = marker_present or has_next or has_previous or has_failed or has_live
+        if not self._vectors_included:
+            self._vectors_original_existed = False
+            self._vectors_switched = False
+            return
+        if has_previous or has_failed:
+            self._vectors_original_existed = True
+        elif has_next:
+            self._vectors_original_existed = has_live
+        elif not marker_present:
+            self._vectors_original_existed = has_live
+        else:
+            self._vectors_original_existed = False
+        self._vectors_switched = has_live and not has_next and not has_failed
+
+    def _promote_vectors(self) -> None:
+        from .vectors import VectorCacheError
+
+        vectors = self.repo / ".kb" / "vectors"
+        try:
+            if vectors.exists():
+                _replace_directory(vectors, self.vectors_previous)
+            _replace_directory(self.vectors_next, vectors)
+        except OSError as error:
+            try:
+                self._restore_failed_vector_swap()
+            except OSError as restore_error:
+                raise RuntimeError(
+                    f"failed to promote vector cache and restore the previous cache: {restore_error}"
+                ) from error
+            self._vectors_switched = False
+            raise VectorCacheError(f"failed to promote vector cache: {error}") from error
+        self._vectors_switched = True
+        try:
+            self._write_vectors_marker()
+            self._write_journal("promoting")
+        except OSError as error:
+            try:
+                self._restore_failed_vector_swap()
+            except OSError as restore_error:
+                raise RuntimeError(
+                    f"failed to record vector promotion and restore the previous cache: {restore_error}"
+                ) from error
+            self._vectors_switched = False
+            raise VectorCacheError(f"failed to record vector promotion: {error}") from error
+
+    def _restore_failed_vector_swap(self) -> None:
+        vectors = self.repo / ".kb" / "vectors"
+        if self.vectors_previous.exists():
+            if vectors.exists():
+                if self.vectors_failed.exists():
+                    shutil.rmtree(self.vectors_failed)
+                    _fsync_directory(self.root)
+                _replace_directory(vectors, self.vectors_failed)
+            if not vectors.exists():
+                _replace_directory(self.vectors_previous, vectors)
+        elif not self._vectors_original_existed and vectors.exists() and not self.vectors_next.exists():
+            _replace_directory(vectors, self.vectors_next)
+
+    def _restore_previous_vectors(self) -> None:
+        vectors = self.repo / ".kb" / "vectors"
+        if vectors.exists():
+            if self.vectors_failed.exists():
+                shutil.rmtree(self.vectors_failed)
+                _fsync_directory(self.root)
+            _replace_directory(vectors, self.vectors_failed)
+        _replace_directory(self.vectors_previous, vectors)
 
     def _rollback_vectors(self) -> None:
         if not self._vectors_included:
@@ -236,11 +333,10 @@ class KnowledgeTransaction:
         vectors = self.repo / ".kb" / "vectors"
         if self._vectors_original_existed:
             if self.vectors_previous.exists():
-                if vectors.exists():
-                    shutil.rmtree(vectors)
-                os.replace(self.vectors_previous, vectors)
+                self._restore_previous_vectors()
         elif vectors.exists() and (self._vectors_switched or not self.vectors_next.exists()):
             shutil.rmtree(vectors)
+            _fsync_directory(vectors.parent)
 
 
 def transaction_state(repo: Path) -> dict[str, Any]:
@@ -268,7 +364,15 @@ def recover_transaction(repo: Path) -> str:
     payload = json.loads(journal.read_text(encoding="utf-8"))
     tx = KnowledgeTransaction(repo, str(payload.get("session_id", "unknown")))
     tx._originals = dict(payload.get("originals", {}))
-    tx._load_vectors_state(payload.get("vectors", {}))
+    if not tx._load_vectors_state(payload.get("vectors", {})):
+        tx._load_vectors_marker()
+    elif not tx._vectors_included and (
+        tx.vectors_marker.exists()
+        or tx.vectors_next.exists()
+        or tx.vectors_previous.exists()
+        or tx.vectors_failed.exists()
+    ):
+        tx._load_vectors_marker()
     phase = payload.get("phase")
     committed_session = git_head_manifest_session(repo)
     current_session = current_manifest_session(repo)

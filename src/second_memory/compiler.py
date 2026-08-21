@@ -1222,7 +1222,11 @@ def finalize_rebuild(repo: Path) -> dict[str, Any]:
                 if isinstance(store, GitStorage):
                     store.unstage_paths(paths if "paths" in locals() else [])
             raise
-        shutil.rmtree(workspace)
+        cleanup_error: Exception | None = None
+        try:
+            shutil.rmtree(workspace)
+        except Exception as error:
+            cleanup_error = error
         vector_error: Exception | None = None
         try:
             final_vector_state = reindex_vectors(repo, offline=True)
@@ -1244,6 +1248,7 @@ def finalize_rebuild(repo: Path) -> dict[str, Any]:
         "transaction_recovery": recovery,
         "vector_status": final_vector_state.status,
         "vector_reason": str(vector_error) if vector_error is not None else final_vector_state.reason,
+        "cleanup_error": str(cleanup_error) if cleanup_error is not None else None,
     }
 
 
