@@ -393,7 +393,9 @@ def _valid_journal(payload: object) -> bool:
         for path, existed in originals.items()
     ):
         return False
-    if not _REQUIRED_ORIGINALS <= set(originals):
+    if not _REQUIRED_ORIGINALS <= set(originals) or any(
+        originals[path] is not True for path in _REQUIRED_ORIGINALS
+    ):
         return False
     vectors = payload["vectors"]
     return (
@@ -430,10 +432,17 @@ def recover_transaction(repo: Path) -> str:
         return recover_corrupt_transaction(repo)
     tx = KnowledgeTransaction(repo, str(payload.get("session_id", "unknown")))
     originals = dict(payload["originals"])
-    required_backups = _REQUIRED_ORIGINALS | {
+    declared_backups = {
         path for path, existed in originals.items() if existed
     }
-    if any(not (tx.backup / relative).is_file() for relative in required_backups):
+    actual_backups: set[str] = set()
+    if tx.backup.exists():
+        actual_backups = {
+            path.relative_to(tx.backup).as_posix()
+            for path in tx.backup.rglob("*")
+            if path.is_file() and not path.relative_to(tx.backup).as_posix().startswith("raw/")
+        }
+    if actual_backups != declared_backups:
         return recover_corrupt_transaction(repo)
     tx._originals = originals
     if not tx._load_vectors_state(payload.get("vectors", {})):

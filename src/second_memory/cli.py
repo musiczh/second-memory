@@ -183,7 +183,7 @@ def rebuild(
                     "llm_request": request,
                     "raw_count": state["total"],
                     "rebuild": state,
-                    "ready_to_finalize": request is None and state["phase"] == "consolidate",
+                    "ready_to_finalize": request is None,
                 },
                 json_output=True,
             )

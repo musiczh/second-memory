@@ -340,10 +340,40 @@ def rebuild_state(repo: Path) -> dict[str, Any]:
 def _same_committed_rebuild_run(source_manifest: dict[str, Any], workspace_manifest: dict[str, Any]) -> bool:
     source = rebuild_manifest_state(source_manifest)
     workspace = rebuild_manifest_state(workspace_manifest)
+    source_session = source_manifest.get("applied_session_id")
+    workspace_session = workspace_manifest.get("applied_session_id")
+    source_consolidation = consolidation_state(source_manifest)
+    workspace_consolidation = consolidation_state(workspace_manifest)
     return (
         source["phase"] == "complete"
         and source["run_id"] is not None
         and source["run_id"] == workspace["run_id"]
+        and workspace["phase"] in {"consolidate", "complete"}
+        and source["cursor"] == source["total"] == workspace["cursor"] == workspace["total"]
+        and source["ordered_raw_ids"] == workspace["ordered_raw_ids"]
+        and source["generation"] is not None
+        and source["generation"] == workspace["generation"]
+        and source["last_session_id"] is not None
+        and source["last_session_id"] == workspace["last_session_id"]
+        and isinstance(source_session, str)
+        and bool(source_session)
+        and source_session == workspace_session
+        and source_consolidation == workspace_consolidation
+        and not workspace_consolidation["pending_raw"]
+    )
+
+
+def _conflicts_with_committed_rebuild_run(
+    source_manifest: dict[str, Any],
+    workspace_manifest: dict[str, Any],
+) -> bool:
+    source = rebuild_manifest_state(source_manifest)
+    workspace = rebuild_manifest_state(workspace_manifest)
+    return (
+        source["phase"] == "complete"
+        and source["run_id"] is not None
+        and source["run_id"] == workspace["run_id"]
+        and not _same_committed_rebuild_run(source_manifest, workspace_manifest)
     )
 
 
@@ -584,11 +614,20 @@ def build_rebuild_request(repo: Path, *, run_id: str | None = None) -> dict[str,
                 return None
             _cleanup_residual_rebuild_workspace(workspace)
             workspace_exists = False
+        elif _conflicts_with_committed_rebuild_run(source_manifest, workspace_manifest):
+            raise ValidationError("workspace does not match committed rebuild identity")
         elif workspace_state["phase"] == "complete":
             _cleanup_residual_rebuild_workspace(workspace)
             workspace_exists = False
         else:
             validate_rebuild_source(repo, workspace)
+    if (
+        not workspace_exists
+        and run_id is not None
+        and source_state["phase"] == "complete"
+        and source_state["run_id"] == run_id
+    ):
+        raise StaleSessionError("stale rebuild run already completed")
     target = workspace if workspace_exists else repo
     state = rebuild_manifest_state(load_manifest(target))
     if workspace_exists and len(consolidation_state(load_manifest(target))["pending_raw"]) >= CONSOLIDATION_BATCH_SIZE:
@@ -1333,6 +1372,26 @@ def _write_manifest_atomic(path: Path, payload: dict[str, Any]) -> None:
         os.close(descriptor)
 
 
+def _ensure_rebuild_run_id(
+    workspace: Path,
+    workspace_manifest: dict[str, Any],
+    source_manifest: dict[str, Any],
+) -> dict[str, Any]:
+    state = rebuild_manifest_state(workspace_manifest)
+    if state["run_id"] is not None:
+        return workspace_manifest
+    source_run_id = rebuild_manifest_state(source_manifest)["run_id"]
+    run_id = uuid.uuid4().hex
+    while run_id == source_run_id:
+        run_id = uuid.uuid4().hex
+    updated = {
+        **workspace_manifest,
+        "rebuild": {**dict(workspace_manifest.get("rebuild", {})), "run_id": run_id},
+    }
+    _write_manifest_atomic(workspace / ".kb" / "manifest.json", updated)
+    return updated
+
+
 def _finish_rebuild_post_commit(
     repo: Path,
     workspace: Path,
@@ -1403,6 +1462,8 @@ def finalize_rebuild(repo: Path) -> dict[str, Any]:
                 recovery=recovery,
                 commit=None,
             )
+        if _conflicts_with_committed_rebuild_run(source_manifest, workspace_manifest):
+            raise ValidationError("workspace does not match committed rebuild identity")
         if state["phase"] == "complete":
             raise ValidationError("rebuild workspace is already complete")
         if state["phase"] != "consolidate" or state["cursor"] != state["total"]:
@@ -1421,6 +1482,9 @@ def finalize_rebuild(repo: Path) -> dict[str, Any]:
                 raise ValidationError(f"raw body changed during rebuild: {raw_id}")
             if raw_source_metadata(entry) != raw_source_metadata(rebuilt):
                 raise ValidationError(f"raw metadata changed during rebuild: {raw_id}")
+
+        workspace_manifest = _ensure_rebuild_run_id(workspace, workspace_manifest, source_manifest)
+        state = rebuild_manifest_state(workspace_manifest)
 
         source_config = load_config(repo)
         source_backend = "git" if (repo / ".git").exists() else "plain"

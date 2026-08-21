@@ -10,7 +10,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from typer.testing import CliRunner
+
 from second_memory import transaction as transaction_module
+from second_memory.cli import app
 from second_memory.compiler import (
     add_raw,
     apply_rebuild_response,
@@ -27,7 +30,7 @@ from second_memory.compiler import (
 )
 from second_memory.config import VECTOR_CONFIG_KEYS, load_config, write_config
 from second_memory.embedding import EmbeddingSpec
-from second_memory.errors import ValidationError
+from second_memory.errors import StaleSessionError, ValidationError
 from second_memory.transaction import KnowledgeTransaction, recover_transaction, transaction_state
 from second_memory.vectors import VectorCacheError, VectorCacheState, reindex_vectors, vector_status
 from tests.helpers import raw_annotation_fields
@@ -220,6 +223,39 @@ class KnowledgeVectorTransactionTest(VectorTestRepository):
             self.assertEqual(content, (self.repo / relative).read_bytes())
         self.assertEqual("original wiki\n", marker.read_text(encoding="utf-8"))
         self.assertFalse(tx.root.exists())
+
+    def test_journal_cannot_claim_an_existing_required_backup_was_absent(self) -> None:
+        original = {
+            "index.md": (self.repo / "index.md").read_bytes(),
+            ".kb/manifest.json": (self.repo / ".kb/manifest.json").read_bytes(),
+            ".kb/pending.jsonl": (self.repo / ".kb/pending.jsonl").read_bytes(),
+        }
+        tx = KnowledgeTransaction(self.repo, "session-false-original")
+        tx.prepare()
+        self.stage_current_core(tx)
+        promoted_manifest = load_manifest(self.repo)
+        promoted_manifest["applied_session_id"] = tx.session_id
+        tx.stage_metadata(index="promoted index\n", manifest=promoted_manifest, pending_rows=[])
+        tx.promote()
+        payload = json.loads(tx.journal.read_text(encoding="utf-8"))
+        payload["originals"][".kb/manifest.json"] = False
+        tx.journal.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+        self.assertEqual("corrupt", transaction_state(self.repo)["state"])
+        self.assertEqual("rolled_back_corrupt_journal", recover_transaction(self.repo))
+        for relative, content in original.items():
+            self.assertEqual(content, (self.repo / relative).read_bytes())
+
+    def test_undeclared_non_raw_backup_uses_corrupt_recovery(self) -> None:
+        tx = KnowledgeTransaction(self.repo, "session-undeclared-backup")
+        tx.prepare()
+        extra = tx.backup / ".kb/undeclared.json"
+        extra.parent.mkdir(parents=True, exist_ok=True)
+        extra.write_text("{}\n", encoding="utf-8")
+
+        self.assertEqual("prepared", transaction_state(self.repo)["state"])
+        self.assertEqual("rolled_back_corrupt_journal", recover_transaction(self.repo))
+        self.assertEqual("clean", transaction_state(self.repo)["state"])
 
     def test_promote_switches_ready_cache_and_rollback_restores_previous_cache(self) -> None:
         self.compile_without_vectors()
@@ -796,6 +832,113 @@ class RawOnlyRebuildVectorTest(VectorTestRepository):
         changed_session = build_rebuild_request(self.repo)["context"]["session_id"]
         self.assertNotEqual(original_session, changed_session)
 
+    def test_completed_rebuild_rejects_its_replayed_first_response(self) -> None:
+        self.seed_compiled_raw()
+        first_request = build_rebuild_request(self.repo)
+        first_response = self.replay_plan(first_request)
+        apply_rebuild_response(self.repo, first_response)
+        tail_request = build_rebuild_request(self.repo)
+        with patch(
+            "second_memory.compiler.reindex_vectors",
+            return_value=VectorCacheState("ready", "initial rebuild"),
+        ):
+            apply_rebuild_response(self.repo, self.consolidation_plan(tail_request))
+
+        completed_manifest = (self.repo / ".kb/manifest.json").read_bytes()
+        self.assertFalse(rebuild_workspace(self.repo).exists())
+        with self.assertRaisesRegex(StaleSessionError, "already completed"):
+            apply_rebuild_response(self.repo, first_response)
+        self.assertFalse(rebuild_workspace(self.repo).exists())
+        self.assertEqual(completed_manifest, (self.repo / ".kb/manifest.json").read_bytes())
+
+    def test_same_run_id_with_different_commit_identity_is_not_post_commit(self) -> None:
+        workspace = self.prepare_ready_rebuild_workspace()
+        with patch.object(KnowledgeTransaction, "mark_committed", side_effect=OSError("journal commit failed")):
+            with self.assertRaisesRegex(OSError, "journal commit failed"):
+                finalize_rebuild(self.repo)
+
+        manifest_path = workspace / ".kb/manifest.json"
+        workspace_manifest = load_manifest(workspace)
+        workspace_manifest["applied_session_id"] = "stale-session"
+        manifest_path.write_text(json.dumps(workspace_manifest, ensure_ascii=False) + "\n", encoding="utf-8")
+
+        with patch(
+            "second_memory.compiler.reindex_vectors",
+            side_effect=AssertionError("identity mismatch must fail before reindex"),
+        ):
+            with self.assertRaisesRegex(ValidationError, "committed rebuild identity"):
+                finalize_rebuild(self.repo)
+
+    def test_legacy_workspace_gets_run_id_before_mark_committed_failure(self) -> None:
+        workspace = self.prepare_ready_rebuild_workspace()
+        manifest_path = workspace / ".kb/manifest.json"
+        workspace_manifest = load_manifest(workspace)
+        workspace_manifest["rebuild"].pop("run_id", None)
+        workspace_manifest["rebuild"].pop("post_commit", None)
+        manifest_path.write_text(json.dumps(workspace_manifest, ensure_ascii=False) + "\n", encoding="utf-8")
+
+        with patch.object(KnowledgeTransaction, "mark_committed", side_effect=OSError("legacy journal commit failed")):
+            with self.assertRaisesRegex(OSError, "legacy journal commit failed"):
+                finalize_rebuild(self.repo)
+
+        source_run_id = load_manifest(self.repo)["rebuild"]["run_id"]
+        self.assertRegex(source_run_id, r"^[0-9a-f]{32}$")
+        self.assertEqual(source_run_id, load_manifest(workspace)["rebuild"]["run_id"])
+        with patch.object(
+            KnowledgeTransaction,
+            "prepare",
+            side_effect=AssertionError("legacy retry must not repeat core promotion"),
+        ), patch(
+            "second_memory.compiler.reindex_vectors",
+            return_value=VectorCacheState("ready", "legacy retried once"),
+        ) as retry_reindex:
+            result = finalize_rebuild(self.repo)
+
+        retry_reindex.assert_called_once_with(self.repo, offline=True)
+        self.assertEqual("ready", result["vector_status"])
+
+    def test_legacy_workspace_gets_run_id_before_terminal_marker_failure(self) -> None:
+        workspace = self.prepare_ready_rebuild_workspace()
+        manifest_path = workspace / ".kb/manifest.json"
+        workspace_manifest = load_manifest(workspace)
+        workspace_manifest["rebuild"].pop("run_id", None)
+        workspace_manifest["rebuild"].pop("post_commit", None)
+        manifest_path.write_text(json.dumps(workspace_manifest, ensure_ascii=False) + "\n", encoding="utf-8")
+        real_replace = os.replace
+        manifest_replaces = 0
+
+        def fail_second_manifest_replace(source, target) -> None:
+            nonlocal manifest_replaces
+            if Path(target) == manifest_path:
+                manifest_replaces += 1
+                if manifest_replaces == 2:
+                    raise OSError("legacy terminal marker failed")
+            real_replace(source, target)
+
+        with patch("second_memory.compiler.os.replace", side_effect=fail_second_manifest_replace), patch(
+            "second_memory.compiler.reindex_vectors",
+            side_effect=AssertionError("reindex must wait for the terminal marker"),
+        ) as first_reindex:
+            with self.assertRaisesRegex(OSError, "legacy terminal marker failed"):
+                finalize_rebuild(self.repo)
+
+        first_reindex.assert_not_called()
+        source_run_id = load_manifest(self.repo)["rebuild"]["run_id"]
+        self.assertRegex(source_run_id, r"^[0-9a-f]{32}$")
+        self.assertEqual(source_run_id, load_manifest(workspace)["rebuild"]["run_id"])
+        with patch.object(
+            KnowledgeTransaction,
+            "prepare",
+            side_effect=AssertionError("legacy marker retry must not repeat core promotion"),
+        ), patch(
+            "second_memory.compiler.reindex_vectors",
+            return_value=VectorCacheState("ready", "legacy marker retried once"),
+        ) as retry_reindex:
+            result = finalize_rebuild(self.repo)
+
+        retry_reindex.assert_called_once_with(self.repo, offline=True)
+        self.assertEqual("ready", result["vector_status"])
+
     def test_mark_committed_failure_retries_only_post_commit_work(self) -> None:
         workspace = self.prepare_ready_rebuild_workspace()
         with patch.object(KnowledgeTransaction, "mark_committed", side_effect=OSError("journal commit failed")), patch(
@@ -813,6 +956,12 @@ class RawOnlyRebuildVectorTest(VectorTestRepository):
         self.assertEqual("post_commit", rebuild_state(self.repo)["phase"])
         self.assertEqual("rebuild", determine_update_mode(self.repo)["mode"])
         self.assertIsNone(build_rebuild_request(self.repo))
+        emitted = CliRunner().invoke(
+            app,
+            ["rebuild", "--emit-request", "--repo", str(self.repo), "--json"],
+        )
+        self.assertEqual(0, emitted.exit_code, emitted.output)
+        self.assertTrue(json.loads(emitted.stdout)["data"]["ready_to_finalize"])
 
         with patch.object(
             KnowledgeTransaction,
