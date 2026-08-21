@@ -18,11 +18,22 @@ class KnowledgeTransaction:
         self.journal = repo / ".kb" / "transaction.json"
         self.wiki_next = self.root / "wiki.next"
         self.wiki_previous = self.root / "wiki.previous"
+        self.vectors_next = self.root / "vectors.next"
+        self.vectors_previous = self.root / "vectors.previous"
+        self.vectors_marker = self.root / "vectors.state.json"
         self.backup = self.root / "backup"
         self.staged = self.root / "staged"
         self._originals: dict[str, bool] = {}
+        self._vectors_included = False
+        self._vectors_original_existed = False
+        self._vectors_switched = False
 
-    def prepare(self, control_paths: list[str] | None = None) -> None:
+    def prepare(
+        self,
+        control_paths: list[str] | None = None,
+        *,
+        include_vectors: bool = False,
+    ) -> None:
         if self.journal.exists():
             raise RuntimeError("unfinished knowledge-base transaction requires recovery")
         if self.root.exists():
@@ -30,6 +41,12 @@ class KnowledgeTransaction:
         self.wiki_next.mkdir(parents=True)
         self.backup.mkdir(parents=True)
         self.staged.mkdir(parents=True)
+        self._vectors_included = include_vectors
+        self._vectors_original_existed = (self.repo / ".kb" / "vectors").exists()
+        self._vectors_switched = False
+        if include_vectors:
+            self.vectors_next.mkdir()
+            self._write_vectors_marker()
         paths = ["index.md", ".kb/manifest.json", ".kb/pending.jsonl", *(control_paths or [])]
         for relative in dict.fromkeys(paths):
             source = self.repo / relative
@@ -38,6 +55,17 @@ class KnowledgeTransaction:
                 target = self.backup / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, target)
+        self._write_journal("prepared")
+
+    def discard_vectors(self) -> None:
+        """Drop an unpromoted vector stage while keeping the core transaction active."""
+        if self.vectors_previous.exists():
+            raise RuntimeError("cannot discard vectors after cache promotion has started")
+        if self.vectors_next.exists():
+            shutil.rmtree(self.vectors_next)
+        self._vectors_included = False
+        self._vectors_switched = False
+        self._write_vectors_marker()
         self._write_journal("prepared")
 
     def stage_metadata(self, *, index: str, manifest: dict[str, Any], pending_rows: list[dict[str, Any]]) -> None:
@@ -62,7 +90,15 @@ class KnowledgeTransaction:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
 
-    def promote(self) -> None:
+    def promote(self, *, vector_repo: Path | None = None) -> None:
+        if self._vectors_included:
+            from .vectors import VectorCacheError, vector_status
+
+            state = vector_status(vector_repo or self.repo, destination=self.vectors_next)
+            if not state.ready:
+                raise VectorCacheError(
+                    f"vector transaction destination is not ready: {state.status}: {state.reason}"
+                )
         self._write_journal("promoting")
         wiki = self.repo / "wiki"
         if wiki.exists():
@@ -89,12 +125,21 @@ class KnowledgeTransaction:
                     os.chmod(target, 0o444)
                 except OSError:
                     pass
+        if self._vectors_included:
+            vectors = self.repo / ".kb" / "vectors"
+            if vectors.exists():
+                os.replace(vectors, self.vectors_previous)
+            os.replace(self.vectors_next, vectors)
+            self._vectors_switched = True
+            self._write_vectors_marker()
+            self._write_journal("promoting")
         self._write_journal("promoted")
 
     def mark_committed(self, commit: str | None) -> None:
         self._write_journal("committed", commit=commit)
 
     def rollback(self) -> None:
+        self._rollback_vectors()
         wiki = self.repo / "wiki"
         if self.wiki_previous.exists():
             if wiki.exists():
@@ -122,6 +167,10 @@ class KnowledgeTransaction:
         self.finalize()
 
     def finalize(self) -> None:
+        vectors = self.repo / ".kb" / "vectors"
+        if self.vectors_previous.exists() and not vectors.exists():
+            vectors.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(self.vectors_previous, vectors)
         if self.root.exists():
             shutil.rmtree(self.root)
         if self.journal.exists():
@@ -132,11 +181,16 @@ class KnowledgeTransaction:
 
     def _write_journal(self, phase: str, *, commit: str | None = None) -> None:
         payload = {
-            "schema": 1,
+            "schema": 2,
             "session_id": self.session_id,
             "phase": phase,
             "commit": commit,
             "originals": self._originals,
+            "vectors": {
+                "included": self._vectors_included,
+                "original_existed": self._vectors_original_existed,
+                "switched": self._vectors_switched,
+            },
         }
         temporary = self.journal.with_suffix(".json.tmp")
         self.journal.parent.mkdir(parents=True, exist_ok=True)
@@ -150,6 +204,43 @@ class KnowledgeTransaction:
             os.fsync(directory)
         finally:
             os.close(directory)
+
+    def _write_vectors_marker(self) -> None:
+        self.root.mkdir(parents=True, exist_ok=True)
+        self.vectors_marker.write_text(
+            json_dumps({
+                "included": self._vectors_included,
+                "original_existed": self._vectors_original_existed,
+                "switched": self._vectors_switched,
+            }) + "\n",
+            encoding="utf-8",
+        )
+
+    def _load_vectors_state(self, value: object) -> None:
+        state = value if isinstance(value, dict) else {}
+        self._vectors_included = bool(state.get("included", False))
+        self._vectors_original_existed = bool(state.get("original_existed", False))
+        self._vectors_switched = bool(state.get("switched", False))
+
+    def _load_vectors_marker(self) -> None:
+        if not self.vectors_marker.exists():
+            return
+        try:
+            self._load_vectors_state(json.loads(self.vectors_marker.read_text(encoding="utf-8")))
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    def _rollback_vectors(self) -> None:
+        if not self._vectors_included:
+            return
+        vectors = self.repo / ".kb" / "vectors"
+        if self._vectors_original_existed:
+            if self.vectors_previous.exists():
+                if vectors.exists():
+                    shutil.rmtree(vectors)
+                os.replace(self.vectors_previous, vectors)
+        elif vectors.exists() and (self._vectors_switched or not self.vectors_next.exists()):
+            shutil.rmtree(vectors)
 
 
 def transaction_state(repo: Path) -> dict[str, Any]:
@@ -177,6 +268,7 @@ def recover_transaction(repo: Path) -> str:
     payload = json.loads(journal.read_text(encoding="utf-8"))
     tx = KnowledgeTransaction(repo, str(payload.get("session_id", "unknown")))
     tx._originals = dict(payload.get("originals", {}))
+    tx._load_vectors_state(payload.get("vectors", {}))
     phase = payload.get("phase")
     committed_session = git_head_manifest_session(repo)
     current_session = current_manifest_session(repo)
@@ -192,6 +284,7 @@ def recover_corrupt_transaction(repo: Path) -> str:
     tx = KnowledgeTransaction(repo, "corrupt-journal")
     if not tx.root.exists():
         raise RuntimeError("corrupt transaction journal has no recovery workspace")
+    tx._load_vectors_marker()
 
     current_session = current_manifest_session(repo)
     committed_session = git_head_manifest_session(repo)

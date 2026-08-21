@@ -48,6 +48,7 @@ from .tips import next_tip
 from .transaction import KnowledgeTransaction, recover_transaction, transaction_state
 from .topics import validate_materialized_topic_contracts, validate_topic_plan
 from .utils import json_dumps, now_local, parse_date, parse_temporal_anchor, relpath, sha256_text, short_hash, slugify
+from .vectors import VectorCacheError, VectorCacheState, reindex_vectors, vector_status
 
 CONSOLIDATION_BATCH_SIZE = 10
 REBUILD_WORKSPACE_NAME = ".second-memory-rebuild-workspace-v2"
@@ -735,6 +736,45 @@ def initialize_rebuild_workspace(repo: Path) -> Path:
     return workspace
 
 
+def _stage_incremental_vectors(
+    repo: Path,
+    tx: KnowledgeTransaction,
+    *,
+    manifest: dict[str, Any],
+    pending_rows: list[dict[str, Any]],
+    raw_documents: dict[str, str],
+    raw_ids: list[str],
+) -> tuple[VectorCacheState, Path]:
+    """Build a delta cache against the transaction's not-yet-promoted core view."""
+    staging_repo = tx.root / "vector-input"
+    (staging_repo / ".kb").mkdir(parents=True)
+    shutil.copy2(repo / ".kb" / "config.yaml", staging_repo / ".kb" / "config.yaml")
+    (staging_repo / ".kb" / "manifest.json").write_text(json_dumps(manifest) + "\n", encoding="utf-8")
+    (staging_repo / ".kb" / "pending.jsonl").write_text(
+        "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in pending_rows),
+        encoding="utf-8",
+    )
+    for entry in raw_lookup(repo).values():
+        relative = relpath(entry.path, repo)
+        target = staging_repo / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        content = raw_documents.get(relative)
+        if content is None:
+            os.link(entry.path, target)
+        else:
+            target.write_text(content, encoding="utf-8")
+    live_cache = repo / ".kb" / "vectors"
+    if live_cache.exists():
+        os.symlink(live_cache, staging_repo / ".kb" / "vectors", target_is_directory=True)
+    state = reindex_vectors(
+        staging_repo,
+        offline=True,
+        raw_ids=raw_ids,
+        destination=tx.vectors_next,
+    )
+    return state, staging_repo
+
+
 def apply_response(repo: Path, response: dict[str, Any], *, command: str) -> dict[str, Any]:
     load_config(repo)
     value = unwrap_response(response)
@@ -965,8 +1005,11 @@ def apply_response(repo: Path, response: dict[str, Any], *, command: str) -> dic
         )
         rebuild = next_rebuild_manifest_state(old_manifest, plan, consumed)
         tx = KnowledgeTransaction(repo, plan.session_id)
-        tx.prepare()
+        include_vectors = plan.mode == "incremental" and bool(load_config(repo).get("vector_enabled", True))
+        tx.prepare(include_vectors=include_vectors)
         committed = False
+        vector_error: Exception | None = None
+        vector_validation_repo: Path | None = None
         try:
             index, counts = render_graph(repo, tx.wiki_next, nodes, edges, lookup)
             manifest = build_manifest(
@@ -986,7 +1029,32 @@ def apply_response(repo: Path, response: dict[str, Any], *, command: str) -> dic
             tx.stage_metadata(index=index, manifest=manifest, pending_rows=next_pending)
             for relative, content in raw_documents.items():
                 tx.stage_raw(relative, content)
-            tx.promote()
+            if include_vectors:
+                try:
+                    staged_vector_state, vector_validation_repo = _stage_incremental_vectors(
+                        repo,
+                        tx,
+                        manifest=manifest,
+                        pending_rows=next_pending,
+                        raw_documents=raw_documents,
+                        raw_ids=consumed,
+                    )
+                    if not staged_vector_state.ready:
+                        tx.discard_vectors()
+                        vector_validation_repo = None
+                except Exception as error:
+                    vector_error = error
+                    tx.discard_vectors()
+                    vector_validation_repo = None
+            try:
+                tx.promote(vector_repo=vector_validation_repo)
+            except VectorCacheError as error:
+                if vector_validation_repo is None:
+                    raise
+                vector_error = error
+                tx.discard_vectors()
+                vector_validation_repo = None
+                tx.promote()
             paths = ["wiki", "index.md", ".kb/manifest.json", ".kb/pending.jsonl", *sorted(raw_documents)]
             commit = store.commit_paths(commit_message(command, plan.mode, consumed, sorted(affected)), paths)
             committed = True
@@ -999,6 +1067,7 @@ def apply_response(repo: Path, response: dict[str, Any], *, command: str) -> dic
                     store.unstage_paths(paths if "paths" in locals() else [])
             raise
 
+        current_vector_state = vector_status(repo)
         result: dict[str, Any] = {
             "mode": plan.mode,
             "session_id": plan.session_id,
@@ -1014,6 +1083,8 @@ def apply_response(repo: Path, response: dict[str, Any], *, command: str) -> dic
             "transaction_recovery": recovery,
             "rebuild": rebuild,
             "quality_repair": quality_repair,
+            "vector_status": current_vector_state.status,
+            "vector_reason": str(vector_error) if vector_error is not None else current_vector_state.reason,
         }
         if plan.mode == "topics":
             result["removed_topics"] = sorted(removed_topic_ids)
@@ -1152,6 +1223,12 @@ def finalize_rebuild(repo: Path) -> dict[str, Any]:
                     store.unstage_paths(paths if "paths" in locals() else [])
             raise
         shutil.rmtree(workspace)
+        vector_error: Exception | None = None
+        try:
+            final_vector_state = reindex_vectors(repo, offline=True)
+        except Exception as error:
+            vector_error = error
+            final_vector_state = vector_status(repo)
     return {
         "mode": "rebuild",
         "commit": commit,
@@ -1165,6 +1242,8 @@ def finalize_rebuild(repo: Path) -> dict[str, Any]:
             "workspace": str(workspace),
         },
         "transaction_recovery": recovery,
+        "vector_status": final_vector_state.status,
+        "vector_reason": str(vector_error) if vector_error is not None else final_vector_state.reason,
     }
 
 

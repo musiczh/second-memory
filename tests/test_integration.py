@@ -32,6 +32,7 @@ from second_memory.compiler import (
     rebuild_state,
     rebuild_workspace,
 )
+from second_memory.config import load_config, write_config
 from second_memory.errors import StaleSessionError, ValidationError
 from second_memory.retriever import search_level1, search_level2_request
 from second_memory.reviewer import collect_timeline_pages
@@ -41,7 +42,7 @@ from second_memory.transaction import KnowledgeTransaction, recover_transaction,
 from second_memory.utils import sha256_text
 from second_memory.wiki import build_wiki_model
 
-from tests.helpers import RepositoryTestCase, content, event_semantics, raw_annotation_fields, topic_attrs
+from tests.helpers import RepositoryTestCase as BaseRepositoryTestCase, content, event_semantics, raw_annotation_fields, topic_attrs
 
 
 CODE_UPDATE_ENV = {
@@ -56,6 +57,18 @@ CODE_UPDATE_ENV = {
         "message": "test code already current",
     })
 }
+
+
+class RepositoryTestCase(BaseRepositoryTestCase):
+    """Keep core integration fixtures independent from the optional local model."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        config = load_config(self.repo)
+        config["vector_enabled"] = False
+        write_config(self.repo, config)
+        if self.backend == "git":
+            GitStorage(self.repo).commit_paths("test: disable vectors", [".kb/config.yaml"])
 
 
 class CompileIntegrationTest(RepositoryTestCase):
@@ -1631,7 +1644,7 @@ class RawOnlySequentialRebuildTest(RepositoryTestCase):
         (self.repo / ".kb" / "manifest.json").write_text(json.dumps(legacy_manifest, ensure_ascii=False), encoding="utf-8")
         (self.repo / ".kb" / "pending.jsonl").write_text("", encoding="utf-8")
         (self.repo / ".kb" / "config.yaml").write_text(
-            'schema: 1\nscope: "agent"\nagent: "test"\npath: "/v1/leaked/path"\nbackend: "plain"\ncompile_version: 1\n',
+            'schema: 1\nscope: "agent"\nagent: "test"\npath: "/v1/leaked/path"\nbackend: "plain"\ncompile_version: 1\nvector_enabled: false\n',
             encoding="utf-8",
         )
         (self.repo / "AGENTS.md").write_text("# v1 编译规则\n", encoding="utf-8")
