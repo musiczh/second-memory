@@ -81,11 +81,17 @@ def _vector_raw_entry(
 ) -> Any | None:
     if raw_id in entries:
         return entries[raw_id]
-    info = manifest_raw.get(raw_id, {}) if isinstance(manifest_raw, dict) else {}
-    path = str(info.get("path", "")) if isinstance(info, dict) else ""
+    if not isinstance(manifest_raw, dict):
+        raise ValueError("vector Raw manifest catalog is invalid")
+    info = manifest_raw.get(raw_id)
+    if not isinstance(info, dict):
+        raise ValueError(f"vector Raw manifest entry is invalid: {raw_id}")
+    path = str(info.get("path", ""))
     if not path:
-        return None
+        raise ValueError(f"vector Raw manifest path is missing: {raw_id}")
     entry = read_raw_by_path(repo, path)
+    if entry.id != raw_id:
+        raise ValueError(f"vector Raw manifest path resolves to another Raw: {raw_id}: {entry.id}")
     entries[raw_id] = entry
     return entry
 

@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -123,7 +124,16 @@ def empty_manifest() -> dict[str, Any]:
         "candidates": [],
         "consolidation": {"pending_raw": [], "memo": "", "last_session_id": None},
         "tips_seen": [],
-        "rebuild": {"phase": "idle", "ordered_raw_ids": [], "cursor": 0, "total": 0, "generation": None, "last_session_id": None},
+        "rebuild": {
+            "phase": "idle",
+            "ordered_raw_ids": [],
+            "cursor": 0,
+            "total": 0,
+            "generation": None,
+            "last_session_id": None,
+            "run_id": None,
+            "post_commit": None,
+        },
         "applied_session_id": None,
     }
 
@@ -252,6 +262,8 @@ def rebuild_manifest_state(manifest: dict[str, Any]) -> dict[str, Any]:
     value = manifest.get("rebuild", {})
     ordered = [str(raw_id) for raw_id in value.get("ordered_raw_ids", [])]
     cursor = int(value.get("cursor", 0))
+    run_id = value.get("run_id")
+    post_commit = value.get("post_commit")
     return {
         "phase": str(value.get("phase", "idle")),
         "ordered_raw_ids": ordered,
@@ -261,6 +273,8 @@ def rebuild_manifest_state(manifest: dict[str, Any]) -> dict[str, Any]:
         "last_session_id": value.get("last_session_id"),
         "source_manifest_schema": value.get("source_manifest_schema"),
         "source_kb_version": value.get("source_kb_version"),
+        "run_id": run_id if isinstance(run_id, str) and run_id else None,
+        "post_commit": post_commit if post_commit in {"pending", "reindex_attempted"} else None,
     }
 
 
@@ -279,8 +293,10 @@ def raw_source_metadata(entry: RawEntry) -> dict[str, Any]:
 
 def rebuild_state(repo: Path) -> dict[str, Any]:
     workspace = rebuild_workspace(repo)
-    if not (workspace / ".kb" / "manifest.json").exists():
-        source_state = rebuild_manifest_state(load_manifest(repo))
+    manifest_path = workspace / ".kb" / "manifest.json"
+    source_manifest = load_manifest(repo)
+    source_state = rebuild_manifest_state(source_manifest)
+    if not manifest_path.exists():
         if source_state["phase"] == "complete":
             return {
                 "active": False,
@@ -299,7 +315,18 @@ def rebuild_state(repo: Path) -> dict[str, Any]:
             "remaining": total,
             "workspace": str(workspace),
         }
-    state = rebuild_manifest_state(load_manifest(workspace))
+    workspace_manifest = load_manifest(workspace)
+    state = rebuild_manifest_state(workspace_manifest)
+    if _same_committed_rebuild_run(source_manifest, workspace_manifest):
+        attempted = state["post_commit"] == "reindex_attempted"
+        return {
+            "active": not attempted,
+            "phase": "complete" if attempted else "post_commit",
+            "processed": state["total"],
+            "total": state["total"],
+            "remaining": 0,
+            "workspace": str(workspace),
+        }
     return {
         "active": state["phase"] in {"replay", "consolidate"},
         "phase": state["phase"],
@@ -308,6 +335,16 @@ def rebuild_state(repo: Path) -> dict[str, Any]:
         "remaining": max(0, state["total"] - state["cursor"]),
         "workspace": str(workspace),
     }
+
+
+def _same_committed_rebuild_run(source_manifest: dict[str, Any], workspace_manifest: dict[str, Any]) -> bool:
+    source = rebuild_manifest_state(source_manifest)
+    workspace = rebuild_manifest_state(workspace_manifest)
+    return (
+        source["phase"] == "complete"
+        and source["run_id"] is not None
+        and source["run_id"] == workspace["run_id"]
+    )
 
 
 def validate_rebuild_source(repo: Path, workspace: Path) -> None:
@@ -400,7 +437,13 @@ def is_quality_repair_due(repo: Path) -> bool:
     )
 
 
-def create_session_id(repo: Path, mode: str, entries: list[RawEntry] | None = None) -> str:
+def create_session_id(
+    repo: Path,
+    mode: str,
+    entries: list[RawEntry] | None = None,
+    *,
+    rebuild_run_id: str | None = None,
+) -> str:
     entries = entries if entries is not None else scope_entries(repo, mode)
     session_entries = ordered_raw_entries(repo) if mode in {"consolidate", "topics"} else entries
     manifest = load_manifest(repo)
@@ -415,6 +458,7 @@ def create_session_id(repo: Path, mode: str, entries: list[RawEntry] | None = No
     cursor = rebuild["cursor"] if rebuild["phase"] == "replay" else 0
     source_manifest_schema = rebuild.get("source_manifest_schema") if mode == "rebuild" else None
     source_kb_version = rebuild.get("source_kb_version") if mode == "rebuild" else None
+    run_id = rebuild_run_id if mode == "rebuild" and rebuild_run_id is not None else rebuild["run_id"]
     payload = {
         "schema": 2,
         "kb_version": KB_VERSION,
@@ -435,11 +479,17 @@ def create_session_id(repo: Path, mode: str, entries: list[RawEntry] | None = No
         "redirects": {} if fresh_rebuild else manifest.get("redirects", {}),
         "edges": [] if fresh_rebuild else manifest.get("edges", []),
         "consolidation": {"pending_raw": [], "memo": "", "last_session_id": None} if fresh_rebuild else consolidation_state(manifest),
-        "rebuild": {"generation": generation, "cursor": cursor, "ordered_raw_ids": [entry.id for entry in ordered]},
+        "rebuild": {
+            "generation": generation,
+            "cursor": cursor,
+            "ordered_raw_ids": [entry.id for entry in ordered],
+            "run_id": run_id,
+        },
         "agents_rules": default_agents_rules() if mode in {"rebuild", "topics"} else read_text(repo / "AGENTS.md"),
     }
     canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return "session-" + short_hash(canonical, length=16)
+    session_id = "session-" + short_hash(canonical, length=16)
+    return f"{session_id}-{run_id}" if mode == "rebuild" and run_id is not None else session_id
 
 
 def build_compile_request(
@@ -448,10 +498,11 @@ def build_compile_request(
     task: str = "compile",
     raw_entries: list[RawEntry] | None = None,
     mode: str = "incremental",
+    rebuild_run_id: str | None = None,
 ) -> dict[str, Any]:
     load_config(repo)
     entries = raw_entries if raw_entries is not None else scope_entries(repo, mode)
-    session_id = create_session_id(repo, mode, entries)
+    session_id = create_session_id(repo, mode, entries, rebuild_run_id=rebuild_run_id)
     manifest = load_manifest(repo)
     rebuild = rebuild_manifest_state(manifest)
     fresh_rebuild = mode == "rebuild" and rebuild["phase"] != "replay"
@@ -505,15 +556,36 @@ def build_compile_request(
     return llm_request(task, agents_rules, context, instructions, compile_response_schema(session_id, mode))
 
 
-def build_rebuild_request(repo: Path) -> dict[str, Any] | None:
+def _cleanup_residual_rebuild_workspace(workspace: Path) -> None:
+    try:
+        shutil.rmtree(workspace)
+    except OSError as error:
+        raise ValidationError(f"residual rebuild workspace cleanup failed: {error}") from error
+    if workspace.exists():
+        raise ValidationError(f"residual rebuild workspace cleanup failed: directory still exists: {workspace}")
+
+
+def build_rebuild_request(repo: Path, *, run_id: str | None = None) -> dict[str, Any] | None:
     workspace = rebuild_workspace(repo)
-    workspace_exists = (workspace / ".kb" / "manifest.json").exists()
+    manifest_path = workspace / ".kb" / "manifest.json"
+    source_manifest = load_manifest(repo)
+    source_state = rebuild_manifest_state(source_manifest)
+    workspace_exists = workspace.exists()
+    if workspace_exists and not manifest_path.exists():
+        if source_state["phase"] != "complete":
+            raise ValidationError(f"incomplete rebuild workspace exists: {workspace}")
+        _cleanup_residual_rebuild_workspace(workspace)
+        workspace_exists = False
     if workspace_exists:
-        if rebuild_manifest_state(load_manifest(workspace))["phase"] == "complete":
-            try:
-                shutil.rmtree(workspace)
-            except OSError as error:
-                raise ValidationError(f"residual rebuild workspace cleanup failed: {error}") from error
+        workspace_manifest = load_manifest(workspace)
+        workspace_state = rebuild_manifest_state(workspace_manifest)
+        if _same_committed_rebuild_run(source_manifest, workspace_manifest):
+            if workspace_state["post_commit"] != "reindex_attempted":
+                return None
+            _cleanup_residual_rebuild_workspace(workspace)
+            workspace_exists = False
+        elif workspace_state["phase"] == "complete":
+            _cleanup_residual_rebuild_workspace(workspace)
             workspace_exists = False
         else:
             validate_rebuild_source(repo, workspace)
@@ -523,7 +595,8 @@ def build_rebuild_request(repo: Path) -> dict[str, Any] | None:
         return build_consolidation_request(target, task="rebuild")
     if state["phase"] == "consolidate":
         return build_consolidation_request(target, task="rebuild", allow_partial=True)
-    request = build_compile_request(target, task="rebuild", mode="rebuild")
+    request_run_id = state["run_id"] if workspace_exists else (run_id or uuid.uuid4().hex)
+    request = build_compile_request(target, task="rebuild", mode="rebuild", rebuild_run_id=request_run_id)
     if not request["context"]["raw_entries"]:
         if state["phase"] == "consolidate":
             return None
@@ -536,6 +609,7 @@ def build_rebuild_request(repo: Path) -> dict[str, Any] | None:
         "step": completed + 1 if total else 0,
         "total": total,
         "completed": completed,
+        "run_id": request_run_id,
     }
     return request
 
@@ -808,7 +882,7 @@ def clean_raw_document(entry: RawEntry) -> str:
     return content
 
 
-def initialize_rebuild_workspace(repo: Path) -> Path:
+def initialize_rebuild_workspace(repo: Path, run_id: str) -> Path:
     workspace = rebuild_workspace(repo)
     if (workspace / ".kb" / "manifest.json").exists():
         return workspace
@@ -833,6 +907,8 @@ def initialize_rebuild_workspace(repo: Path) -> Path:
         "last_session_id": None,
         "source_manifest_schema": source_manifest.get("schema"),
         "source_kb_version": source_manifest.get("kb_version"),
+        "run_id": run_id,
+        "post_commit": None,
     }
     manifest = empty_manifest()
     manifest["tips_seen"] = sorted(set(str(value) for value in source_manifest.get("tips_seen", [])))
@@ -1210,11 +1286,14 @@ def apply_rebuild_response(repo: Path, response: dict[str, Any]) -> dict[str, An
     workspace = rebuild_workspace(repo)
     if plan.mode == "rebuild":
         if not (workspace / ".kb" / "manifest.json").exists():
-            request = build_rebuild_request(repo)
+            run_id = plan.session_id.rsplit("-", 1)[-1]
+            if len(run_id) != 32 or any(character not in "0123456789abcdef" for character in run_id):
+                raise StaleSessionError("stale rebuild session has no valid run ID")
+            request = build_rebuild_request(repo, run_id=run_id)
             if request is None or plan.session_id != str(request["context"]["session_id"]):
                 expected = request["context"]["session_id"] if request else "none"
                 raise StaleSessionError(f"stale session: expected {expected}, got {plan.session_id or 'empty'}")
-            initialize_rebuild_workspace(repo)
+            initialize_rebuild_workspace(repo, run_id)
         else:
             validate_rebuild_source(repo, workspace)
         result = apply_response(workspace, response, command="rebuild")
@@ -1240,6 +1319,70 @@ def apply_rebuild_response(repo: Path, response: dict[str, Any]) -> dict[str, An
     }
 
 
+def _write_manifest_atomic(path: Path, payload: dict[str, Any]) -> None:
+    temporary = path.with_name(path.name + ".tmp")
+    with temporary.open("w", encoding="utf-8") as handle:
+        handle.write(json_dumps(payload) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, path)
+    descriptor = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _finish_rebuild_post_commit(
+    repo: Path,
+    workspace: Path,
+    source_manifest: dict[str, Any],
+    workspace_manifest: dict[str, Any],
+    *,
+    recovery: str,
+    commit: str | None,
+) -> dict[str, Any]:
+    source_state = rebuild_manifest_state(source_manifest)
+    workspace_state = rebuild_manifest_state(workspace_manifest)
+    vector_error: Exception | None = None
+    if workspace_state["post_commit"] != "reindex_attempted":
+        terminal_manifest = {
+            **source_manifest,
+            "rebuild": {**source_state, "phase": "complete", "post_commit": "reindex_attempted"},
+        }
+        _write_manifest_atomic(workspace / ".kb" / "manifest.json", terminal_manifest)
+        try:
+            final_vector_state = reindex_vectors(repo, offline=True)
+        except Exception as error:
+            vector_error = error
+            final_vector_state = vector_status(repo)
+    else:
+        final_vector_state = vector_status(repo)
+
+    cleanup_error: Exception | None = None
+    try:
+        shutil.rmtree(workspace)
+    except Exception as error:
+        cleanup_error = error
+    return {
+        "mode": "rebuild",
+        "commit": commit,
+        "counts": graph_stats(repo),
+        "rebuild_progress": {
+            "active": False,
+            "phase": "complete",
+            "processed": source_state["total"],
+            "total": source_state["total"],
+            "remaining": 0,
+            "workspace": str(workspace),
+        },
+        "transaction_recovery": recovery,
+        "vector_status": final_vector_state.status,
+        "vector_reason": str(vector_error) if vector_error is not None else final_vector_state.reason,
+        "cleanup_error": str(cleanup_error) if cleanup_error is not None else None,
+    }
+
+
 def finalize_rebuild(repo: Path) -> dict[str, Any]:
     workspace = rebuild_workspace(repo)
     manifest_path = workspace / ".kb" / "manifest.json"
@@ -1248,8 +1391,18 @@ def finalize_rebuild(repo: Path) -> dict[str, Any]:
     with RepoLock(repo):
         recovery = recover_transaction(repo)
         workspace_manifest = load_manifest(workspace)
+        source_manifest = load_manifest(repo)
         state = rebuild_manifest_state(workspace_manifest)
         consolidation = consolidation_state(workspace_manifest)
+        if _same_committed_rebuild_run(source_manifest, workspace_manifest):
+            return _finish_rebuild_post_commit(
+                repo,
+                workspace,
+                source_manifest,
+                workspace_manifest,
+                recovery=recovery,
+                commit=None,
+            )
         if state["phase"] == "complete":
             raise ValidationError("rebuild workspace is already complete")
         if state["phase"] != "consolidate" or state["cursor"] != state["total"]:
@@ -1280,7 +1433,7 @@ def finalize_rebuild(repo: Path) -> dict[str, Any]:
         final_config.update({key: source_config[key] for key in VECTOR_CONFIG_KEYS})
         final_manifest = {
             **workspace_manifest,
-            "rebuild": {**state, "phase": "complete"},
+            "rebuild": {**state, "phase": "complete", "post_commit": "pending"},
         }
         session_id = str(workspace_manifest.get("applied_session_id") or state.get("last_session_id") or "rebuild-finalize")
         store = storage_for(repo)
@@ -1331,35 +1484,14 @@ def finalize_rebuild(repo: Path) -> dict[str, Any]:
                 if isinstance(store, GitStorage):
                     store.unstage_paths(paths if "paths" in locals() else [])
             raise
-        manifest_path.write_text(json_dumps(final_manifest) + "\n", encoding="utf-8")
-        cleanup_error: Exception | None = None
-        try:
-            shutil.rmtree(workspace)
-        except Exception as error:
-            cleanup_error = error
-        vector_error: Exception | None = None
-        try:
-            final_vector_state = reindex_vectors(repo, offline=True)
-        except Exception as error:
-            vector_error = error
-            final_vector_state = vector_status(repo)
-    return {
-        "mode": "rebuild",
-        "commit": commit,
-        "counts": graph_stats(repo),
-        "rebuild_progress": {
-            "active": False,
-            "phase": "complete",
-            "processed": state["total"],
-            "total": state["total"],
-            "remaining": 0,
-            "workspace": str(workspace),
-        },
-        "transaction_recovery": recovery,
-        "vector_status": final_vector_state.status,
-        "vector_reason": str(vector_error) if vector_error is not None else final_vector_state.reason,
-        "cleanup_error": str(cleanup_error) if cleanup_error is not None else None,
-    }
+        return _finish_rebuild_post_commit(
+            repo,
+            workspace,
+            final_manifest,
+            workspace_manifest,
+            recovery=recovery,
+            commit=commit,
+        )
 
 
 def unwrap_response(response: dict[str, Any]) -> dict[str, Any]:

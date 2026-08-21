@@ -145,6 +145,9 @@ class KnowledgeVectorTransactionTest(VectorTestRepository):
             {**valid, "session_id": ""},
             {**valid, "phase": "unknown"},
             {**valid, "originals": []},
+            {**valid, "originals": {**valid["originals"], "../escape": True}},
+            {**valid, "originals": {**valid["originals"], "/absolute": True}},
+            {**valid, "originals": {**valid["originals"], "wiki/./marker.md": True}},
             {**valid, "vectors": {**valid["vectors"], "included": "yes"}},
             {**valid, "commit": 42},
             {**valid, "unexpected": True},
@@ -153,6 +156,15 @@ class KnowledgeVectorTransactionTest(VectorTestRepository):
             with self.subTest(index=index):
                 tx.journal.write_text(json.dumps(payload), encoding="utf-8")
                 self.assertEqual("corrupt", transaction_state(self.repo)["state"])
+
+    def test_valid_journal_with_a_declared_missing_core_backup_uses_corrupt_recovery(self) -> None:
+        tx = KnowledgeTransaction(self.repo, "session-missing-core-backup")
+        tx.prepare()
+        (tx.backup / ".kb/manifest.json").unlink()
+
+        self.assertEqual("prepared", transaction_state(self.repo)["state"])
+        self.assertEqual("rolled_back_corrupt_journal", recover_transaction(self.repo))
+        self.assertEqual("clean", transaction_state(self.repo)["state"])
 
     def test_parseable_corrupt_promoted_journal_restores_core_backup(self) -> None:
         marker = self.repo / "wiki/marker.md"
@@ -178,6 +190,34 @@ class KnowledgeVectorTransactionTest(VectorTestRepository):
 
         self.assertEqual(original_index, (self.repo / "index.md").read_bytes())
         self.assertEqual(original_manifest, (self.repo / ".kb/manifest.json").read_bytes())
+        self.assertEqual("original wiki\n", marker.read_text(encoding="utf-8"))
+        self.assertFalse(tx.root.exists())
+
+    def test_exact_schema_journal_with_empty_originals_uses_corrupt_backup_recovery(self) -> None:
+        marker = self.repo / "wiki/marker.md"
+        marker.write_text("original wiki\n", encoding="utf-8")
+        self.add_plan("待恢复原料", "待恢复原料正文" * 12)
+        original = {
+            "index.md": (self.repo / "index.md").read_bytes(),
+            ".kb/manifest.json": (self.repo / ".kb/manifest.json").read_bytes(),
+            ".kb/pending.jsonl": (self.repo / ".kb/pending.jsonl").read_bytes(),
+        }
+        tx = KnowledgeTransaction(self.repo, "session-empty-originals")
+        tx.prepare()
+        self.stage_current_core(tx)
+        (tx.wiki_next / "marker.md").write_text("promoted wiki\n", encoding="utf-8")
+        promoted_manifest = load_manifest(self.repo)
+        promoted_manifest["applied_session_id"] = tx.session_id
+        tx.stage_metadata(index="promoted index\n", manifest=promoted_manifest, pending_rows=[])
+        tx.promote()
+        payload = json.loads(tx.journal.read_text(encoding="utf-8"))
+        tx.journal.write_text(json.dumps({**payload, "originals": {}}) + "\n", encoding="utf-8")
+
+        self.assertEqual("corrupt", transaction_state(self.repo)["state"])
+        self.assertEqual("rolled_back_corrupt_journal", recover_transaction(self.repo))
+
+        for relative, content in original.items():
+            self.assertEqual(content, (self.repo / relative).read_bytes())
         self.assertEqual("original wiki\n", marker.read_text(encoding="utf-8"))
         self.assertFalse(tx.root.exists())
 
@@ -668,6 +708,20 @@ class RawOnlyRebuildVectorTest(VectorTestRepository):
         apply_response(self.repo, plan, command="compile")
         self.set_vectors_enabled(True)
 
+    def prepare_final_rebuild_request(self) -> dict[str, object]:
+        self.seed_compiled_raw()
+        first_request = build_rebuild_request(self.repo)
+        apply_rebuild_response(self.repo, self.replay_plan(first_request))
+        tail_request = build_rebuild_request(self.repo)
+        assert tail_request is not None
+        return tail_request
+
+    def prepare_ready_rebuild_workspace(self) -> Path:
+        tail_request = self.prepare_final_rebuild_request()
+        workspace = rebuild_workspace(self.repo)
+        apply_response(workspace, self.consolidation_plan(tail_request), command="consolidate")
+        return workspace
+
     @staticmethod
     def replay_plan(request: dict[str, object]) -> dict[str, object]:
         context = request["context"]
@@ -723,6 +777,91 @@ class RawOnlyRebuildVectorTest(VectorTestRepository):
         self.assertTrue(result["rebuild_complete"])
         self.assertEqual("ready", result["vector_status"])
         self.assertEqual("ready", vector_status(self.repo).status)
+
+    def test_rebuild_request_and_workspace_share_a_unique_nonempty_run_id(self) -> None:
+        self.seed_compiled_raw()
+
+        first_request = build_rebuild_request(self.repo)
+        run_id = first_request["context"]["rebuild"]["run_id"]
+        apply_rebuild_response(self.repo, self.replay_plan(first_request))
+
+        self.assertRegex(run_id, r"^[0-9a-f]{32}$")
+        workspace = rebuild_workspace(self.repo)
+        manifest_path = workspace / ".kb/manifest.json"
+        manifest = load_manifest(workspace)
+        self.assertEqual(run_id, manifest["rebuild"]["run_id"])
+        original_session = build_rebuild_request(self.repo)["context"]["session_id"]
+        manifest["rebuild"]["run_id"] = "f" * 32
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False) + "\n", encoding="utf-8")
+        changed_session = build_rebuild_request(self.repo)["context"]["session_id"]
+        self.assertNotEqual(original_session, changed_session)
+
+    def test_mark_committed_failure_retries_only_post_commit_work(self) -> None:
+        workspace = self.prepare_ready_rebuild_workspace()
+        with patch.object(KnowledgeTransaction, "mark_committed", side_effect=OSError("journal commit failed")), patch(
+            "second_memory.compiler.reindex_vectors",
+            side_effect=AssertionError("reindex must wait for a durable terminal marker"),
+        ) as first_reindex:
+            with self.assertRaisesRegex(OSError, "journal commit failed"):
+                finalize_rebuild(self.repo)
+
+        first_reindex.assert_not_called()
+        source_state = load_manifest(self.repo)["rebuild"]
+        workspace_state = load_manifest(workspace)["rebuild"]
+        self.assertEqual("complete", source_state["phase"])
+        self.assertEqual(source_state["run_id"], workspace_state["run_id"])
+        self.assertEqual("post_commit", rebuild_state(self.repo)["phase"])
+        self.assertEqual("rebuild", determine_update_mode(self.repo)["mode"])
+        self.assertIsNone(build_rebuild_request(self.repo))
+
+        with patch.object(
+            KnowledgeTransaction,
+            "prepare",
+            side_effect=AssertionError("post-commit retry must not prepare a second core transaction"),
+        ), patch(
+            "second_memory.compiler.reindex_vectors",
+            return_value=VectorCacheState("ready", "retried once"),
+        ) as retry_reindex:
+            result = finalize_rebuild(self.repo)
+
+        retry_reindex.assert_called_once_with(self.repo, offline=True)
+        self.assertEqual("ready", result["vector_status"])
+        self.assertFalse(workspace.exists())
+
+    def test_terminal_marker_write_failure_retries_before_one_reindex_attempt(self) -> None:
+        workspace = self.prepare_ready_rebuild_workspace()
+        manifest_path = workspace / ".kb/manifest.json"
+        real_replace = os.replace
+
+        def fail_terminal_marker(source, target) -> None:
+            if Path(target) == manifest_path:
+                raise OSError("terminal marker replace failed")
+            real_replace(source, target)
+
+        with patch("second_memory.compiler.os.replace", side_effect=fail_terminal_marker), patch(
+            "second_memory.compiler.reindex_vectors",
+            side_effect=AssertionError("reindex must not run after marker persistence fails"),
+        ) as first_reindex:
+            with self.assertRaisesRegex(OSError, "terminal marker replace failed"):
+                finalize_rebuild(self.repo)
+
+        first_reindex.assert_not_called()
+        self.assertEqual("complete", load_manifest(self.repo)["rebuild"]["phase"])
+        self.assertEqual("post_commit", rebuild_state(self.repo)["phase"])
+
+        with patch.object(
+            KnowledgeTransaction,
+            "prepare",
+            side_effect=AssertionError("marker retry must not prepare a second core transaction"),
+        ), patch(
+            "second_memory.compiler.reindex_vectors",
+            return_value=VectorCacheState("ready", "attempted once"),
+        ) as retry_reindex:
+            result = finalize_rebuild(self.repo)
+
+        retry_reindex.assert_called_once_with(self.repo, offline=True)
+        self.assertEqual("ready", result["vector_status"])
+        self.assertFalse(workspace.exists())
 
     def test_final_reindex_failure_does_not_undo_completed_core_rebuild(self) -> None:
         self.seed_compiled_raw()
@@ -798,22 +937,56 @@ class RawOnlyRebuildVectorTest(VectorTestRepository):
         self.assertIn("workspace cleanup failed", result["cleanup_error"])
         self.assertTrue(workspace.exists())
         self.assertEqual("complete", load_manifest(workspace)["rebuild"]["phase"])
+        self.assertEqual("reindex_attempted", load_manifest(workspace)["rebuild"]["post_commit"])
         self.assertFalse(rebuild_state(self.repo)["active"])
         self.assertEqual("complete", rebuild_state(self.repo)["phase"])
         self.assertEqual("noop", determine_update_mode(self.repo)["mode"])
 
-        with patch(
+        with patch("second_memory.compiler.shutil.rmtree", side_effect=OSError("cleanup still failed")), patch(
             "second_memory.compiler.reindex_vectors",
             side_effect=AssertionError("repeat finalize must not reindex"),
         ) as repeat_reindex:
-            with self.assertRaisesRegex(ValidationError, "already complete"):
-                finalize_rebuild(self.repo)
+            retry = finalize_rebuild(self.repo)
         repeat_reindex.assert_not_called()
+        self.assertIn("cleanup still failed", retry["cleanup_error"])
 
         with patch(
             "second_memory.compiler.shutil.rmtree",
             side_effect=OSError("residual workspace cleanup still failed"),
         ):
+            with self.assertRaisesRegex(ValidationError, "residual rebuild workspace cleanup failed"):
+                build_rebuild_request(self.repo)
+
+    def test_partial_residual_cleanup_cannot_start_after_manifest_disappears(self) -> None:
+        tail_request = self.prepare_final_rebuild_request()
+        workspace = rebuild_workspace(self.repo)
+        manifest_path = workspace / ".kb/manifest.json"
+        real_rmtree = shutil.rmtree
+
+        def keep_completed_workspace(path, *args, **kwargs) -> None:
+            if Path(path) == workspace:
+                raise OSError("initial cleanup failed")
+            real_rmtree(path, *args, **kwargs)
+
+        with patch("second_memory.compiler.shutil.rmtree", side_effect=keep_completed_workspace), patch(
+            "second_memory.compiler.reindex_vectors",
+            return_value=VectorCacheState("ready", "attempted once"),
+        ):
+            apply_rebuild_response(self.repo, self.consolidation_plan(tail_request))
+
+        def remove_manifest_then_fail(path, *args, **kwargs) -> None:
+            if Path(path) == workspace:
+                manifest_path.unlink()
+                raise OSError("partial residual cleanup failed")
+            real_rmtree(path, *args, **kwargs)
+
+        with patch("second_memory.compiler.shutil.rmtree", side_effect=remove_manifest_then_fail):
+            with self.assertRaisesRegex(ValidationError, "residual rebuild workspace cleanup failed"):
+                build_rebuild_request(self.repo)
+        self.assertTrue(workspace.exists())
+        self.assertFalse(manifest_path.exists())
+
+        with patch("second_memory.compiler.shutil.rmtree", side_effect=OSError("residual directory still exists")):
             with self.assertRaisesRegex(ValidationError, "residual rebuild workspace cleanup failed"):
                 build_rebuild_request(self.repo)
 

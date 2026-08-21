@@ -159,6 +159,12 @@ class VectorRepositoryTest(unittest.TestCase):
         info["file_hash"] = hashlib.sha256(content.encode("utf-8")).hexdigest()
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
 
+    def rewrite_cache_manifest(self, mutate) -> None:
+        manifest_path = self.repo / ".kb/vectors/manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        mutate(manifest)
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
+
     def test_units_are_stable_locators_and_body_chunks_never_cross_sections(self) -> None:
         body = "甲" * 600 + "乙" * 50
         raw_id = str(add_raw(self.repo, "分段长原料", body, "2026-08-20", ["test"])["raw_id"])
@@ -319,6 +325,68 @@ class VectorRepositoryTest(unittest.TestCase):
                 reindex_vectors(self.repo, provider)
                 self.rewrite_cached_rows(raw_id, lambda rows: rows[0].__setitem__(field, "leak"))
 
+                self.assertEqual("corrupt", vector_status(self.repo).status)
+
+    def test_status_rejects_bool_locator_and_vector_values_equal_to_zero_or_one(self) -> None:
+        raw_id = self.compile_raws([(
+            "bool 单元校验",
+            "bool 单元校验正文需要足够长，以生成可回切的 body 向量单元。" * 8,
+        )])[0]
+        provider = FakeProvider()
+        cases = {
+            "summary segment_index false": lambda rows: next(
+                row for row in rows if row["kind"] == "summary"
+            ).update({"segment_index": False}),
+            "body zero locators false": lambda rows: next(
+                row for row in rows if row["kind"] == "body"
+            ).update({"section_index": False, "start": False}),
+            "vector true": lambda rows: rows[0]["vector"].__setitem__(0, True),
+        }
+
+        for label, mutate in cases.items():
+            with self.subTest(label=label):
+                reindex_vectors(self.repo, provider)
+                self.assertEqual("ready", vector_status(self.repo).status)
+                self.rewrite_cached_rows(raw_id, mutate)
+                self.assertEqual("corrupt", vector_status(self.repo).status)
+
+    def test_vector_scalars_reject_strings_and_bytes_but_accept_numpy_floats(self) -> None:
+        import numpy as np
+
+        class ByteProvider(FakeProvider):
+            def embed_passages(self, texts: list[str]):
+                return [[b"1.0", *embedding(1.0)[1:]] for _ in texts]
+
+        class NumpyProvider(FakeProvider):
+            def embed_passages(self, texts: list[str]):
+                return [[np.float32(value) for value in embedding(1.0)] for _ in texts]
+
+        raw_id = self.compile_raws([("数值标量校验", "数值标量校验正文" * 12)])[0]
+        provider = FakeProvider()
+        reindex_vectors(self.repo, provider)
+        self.rewrite_cached_rows(raw_id, lambda rows: rows[0]["vector"].__setitem__(0, "1.0"))
+        self.assertEqual("corrupt", vector_status(self.repo).status)
+
+        with self.assertRaisesRegex(VectorCacheError, "numeric"):
+            reindex_vectors(self.repo, ByteProvider())
+
+        self.assertEqual("ready", reindex_vectors(self.repo, NumpyProvider()).status)
+
+    def test_status_rejects_bool_manifest_and_raw_count_fields(self) -> None:
+        raw_id = self.compile_raws([("bool 计数校验", "bool 计数校验正文" * 12)])[0]
+        provider = FakeProvider()
+        cases = {
+            "schema": lambda manifest: manifest.update({"schema": True}),
+            "raw_count": lambda manifest: manifest.update({"raw_count": True}),
+            "unit_count": lambda manifest: manifest.update({"unit_count": True}),
+            "raw unit_count": lambda manifest: manifest["raws"][raw_id].update({"unit_count": True}),
+        }
+
+        for label, mutate in cases.items():
+            with self.subTest(label=label):
+                reindex_vectors(self.repo, provider)
+                self.assertEqual("ready", vector_status(self.repo).status)
+                self.rewrite_cache_manifest(mutate)
                 self.assertEqual("corrupt", vector_status(self.repo).status)
 
     def test_status_rejects_missing_corrupt_dimension_and_stale_cache_as_a_whole(self) -> None:

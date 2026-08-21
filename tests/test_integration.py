@@ -412,19 +412,25 @@ class CompileIntegrationTest(RepositoryTestCase):
         self.assertNotIn("二级请求只应携带命中单元，而非整篇原料正文。", json.dumps(context["vector_raws"], ensure_ascii=False))
 
     def test_vector_supplement_bounds_raw_metadata_to_vector_raw_results(self) -> None:
+        first = self.add("向量聚合甲", "向量聚合只回切实际入选的原料。", "2026-08-03")
+        second = self.add("向量聚合乙", "未进入原料聚合的向量单元仍可作为单元证据。", "2026-08-04")
+        self.apply_pending(states={
+            first: "向量聚合只读取结果中明确选择的原料",
+            second: "未选择的原料无需读取元数据",
+        })
         result = VectorSearchResult(
             "ready",
             "ready",
             [
-                VectorUnit(chunk_id="unit-1", raw_id="raw-1", kind="summary", text="一", score=0.9),
-                VectorUnit(chunk_id="unit-2", raw_id="raw-2", kind="summary", text="二", score=0.8),
+                VectorUnit(chunk_id="unit-1", raw_id=first, kind="summary", text="一", score=0.9),
+                VectorUnit(chunk_id="unit-2", raw_id=second, kind="summary", text="二", score=0.8),
             ],
-            [{"raw_id": "raw-1", "score": 0.9}],
+            [{"raw_id": first, "score": 0.9}],
         )
 
         supplemental = vector_supplement(self.repo, result)
 
-        self.assertEqual(["raw-1"], [raw["raw_id"] for raw in supplemental["raws"]])
+        self.assertEqual([first], [raw["raw_id"] for raw in supplemental["raws"]])
 
     def test_vector_metadata_race_degrades_without_losing_keyword_results(self) -> None:
         raw_id = self.add("向量元数据竞态", "关键词结果必须在向量原料读取失败时继续返回。", "2026-08-03")
@@ -449,6 +455,40 @@ class CompileIntegrationTest(RepositoryTestCase):
         self.assertIn("Raw metadata disappeared", result["supplemental_raw"]["reason"])
         self.assertEqual([], result["supplemental_raw"]["units"])
         self.assertEqual([], result["supplemental_raw"]["raws"])
+
+    def test_vector_supplement_rejects_empty_and_wrong_raw_metadata_paths_atomically(self) -> None:
+        first = self.add("向量回切甲", "向量回切甲的关键词结果必须保留。", "2026-08-03")
+        second = self.add("向量回切乙", "向量回切乙用于验证错误路径。", "2026-08-04")
+        self.apply_pending(states={
+            first: "向量回切元数据错误不得影响关键词结果",
+            second: "另一条原料不得被当作目标原料回切",
+        })
+        baseline = search_level1(self.repo, "向量回切甲")
+        manifest_path = self.repo / ".kb/manifest.json"
+        original = load_manifest(self.repo)
+        wrong_paths = ["", original["raw_hashes"][second]["path"]]
+        vector = VectorSearchResult(
+            "ready",
+            "ready",
+            [VectorUnit(chunk_id="unit-path", raw_id=first, kind="body", text="向量回切", start=0, end=4, score=0.9)],
+            [{"raw_id": first, "score": 0.9}],
+        )
+
+        for wrong_path in wrong_paths:
+            with self.subTest(wrong_path=wrong_path or "empty"):
+                tampered = json.loads(json.dumps(original))
+                tampered["raw_hashes"][first]["path"] = wrong_path
+                manifest_path.write_text(json.dumps(tampered, ensure_ascii=False) + "\n", encoding="utf-8")
+                with patch("second_memory.retriever.search_vectors", return_value=vector):
+                    result = search_level1(self.repo, "向量回切甲")
+
+                self.assertEqual(baseline["candidates"], result["candidates"])
+                self.assertEqual(baseline["hits"], result["hits"])
+                self.assertEqual("corrupt", result["supplemental_raw"]["status"])
+                self.assertEqual([], result["supplemental_raw"]["units"])
+                self.assertEqual([], result["supplemental_raw"]["raws"])
+
+        manifest_path.write_text(json.dumps(original, ensure_ascii=False) + "\n", encoding="utf-8")
 
     def test_rg_hits_parses_single_index_file_with_colons_in_text(self) -> None:
         completed = type("Completed", (), {
@@ -1807,7 +1847,11 @@ class RawOnlySequentialRebuildTest(RepositoryTestCase):
 
         self.assertEqual("rebuild", context["mode"])
         self.assertEqual([self.ordered_raw[0]["id"]], [item["id"] for item in context["raw_entries"]])
-        self.assertEqual({"phase": "replay", "step": 1, "total": 3, "completed": 0}, context["rebuild"])
+        self.assertEqual(
+            {"phase": "replay", "step": 1, "total": 3, "completed": 0},
+            {key: context["rebuild"][key] for key in ("phase", "step", "total", "completed")},
+        )
+        self.assertRegex(context["rebuild"]["run_id"], r"^[0-9a-f]{32}$")
         self.assertEqual([], context["existing_nodes"])
         self.assertEqual({}, context["redirects"])
         self.assertEqual([], context["existing_candidates"])
@@ -1840,7 +1884,11 @@ class RawOnlySequentialRebuildTest(RepositoryTestCase):
         next_request = build_rebuild_request(self.repo)
         next_context = next_request["context"]
         self.assertEqual([self.ordered_raw[1]["id"]], [item["id"] for item in next_context["raw_entries"]])
-        self.assertEqual({"phase": "replay", "step": 2, "total": 3, "completed": 1}, next_context["rebuild"])
+        self.assertEqual(
+            {"phase": "replay", "step": 2, "total": 3, "completed": 1},
+            {key: next_context["rebuild"][key] for key in ("phase", "step", "total", "completed")},
+        )
+        self.assertEqual(first_request["context"]["rebuild"]["run_id"], next_context["rebuild"]["run_id"])
         self.assertEqual(1, len(next_context["existing_nodes"]))
         self.assertEqual([first_raw_id], next_context["existing_nodes"][0]["sources"])
         self.assertNotIn("topic-v1-legacy", {node["id"] for node in next_context["existing_nodes"]})

@@ -464,16 +464,19 @@ def _inspect_cache(repo: Path, cache_root: Path, *, ignore_pending: bool = False
         return VectorCacheState("missing", "vector cache manifest is missing")
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        if not isinstance(manifest, dict) or int(manifest.get("schema", 0)) != VECTOR_CACHE_SCHEMA:
+        if not isinstance(manifest, dict):
             raise VectorCacheError("vector cache schema is invalid")
         if set(manifest) != _MANIFEST_KEYS:
             raise VectorCacheError("vector cache manifest fields are invalid")
+        if _nonnegative_integer(manifest.get("schema"), "vector cache schema") != VECTOR_CACHE_SCHEMA:
+            raise VectorCacheError("vector cache schema is invalid")
         spec = _spec_from_manifest(manifest)
         if _spec_fingerprint(spec) != manifest.get("spec_fingerprint"):
             raise VectorCacheError("embedding spec fingerprint is invalid")
         if manifest.get("provider") != spec.provider or manifest.get("model") != spec.model:
             raise VectorCacheError("embedding spec fields are inconsistent")
-        if manifest.get("model_hash") != spec.model_hash or int(manifest.get("dimension", 0)) != spec.dimension:
+        dimension = _positive_integer(manifest.get("dimension"), "vector cache dimension")
+        if manifest.get("model_hash") != spec.model_hash or dimension != spec.dimension:
             raise VectorCacheError("embedding model fields are inconsistent")
         if manifest.get("config_fingerprint") != _config_fingerprint(config):
             return VectorCacheState("stale", "vector configuration differs from the cache", manifest)
@@ -486,7 +489,7 @@ def _inspect_cache(repo: Path, cache_root: Path, *, ignore_pending: bool = False
         raw_manifests = manifest.get("raws")
         if not isinstance(raw_manifests, dict) or set(raw_manifests) != set(compiled_ids):
             return VectorCacheState("stale", "compiled Raw set differs from the cache", manifest)
-        if int(manifest.get("raw_count", -1)) != len(raw_manifests):
+        if _nonnegative_integer(manifest.get("raw_count"), "vector Raw count") != len(raw_manifests):
             raise VectorCacheError("vector Raw count is invalid")
         unit_count = 0
         for raw_id in compiled_ids:
@@ -502,12 +505,13 @@ def _inspect_cache(repo: Path, cache_root: Path, *, ignore_pending: bool = False
             if not path.is_file():
                 return VectorCacheState("missing", f"vector JSONL is missing: {raw_id}", manifest)
             rows = _read_rows(path, raw_id, info, spec.dimension)
-            if len(rows) != int(info.get("unit_count", -1)):
+            info_unit_count = _nonnegative_integer(info.get("unit_count"), f"vector unit count: {raw_id}")
+            if len(rows) != info_unit_count:
                 raise VectorCacheError(f"vector unit count is invalid: {raw_id}")
             expected_units = build_vector_units(entries[raw_id], config)
             _validate_rows_against_units(rows, expected_units, raw_id)
             unit_count += len(rows)
-        if unit_count != int(manifest.get("unit_count", -1)):
+        if unit_count != _nonnegative_integer(manifest.get("unit_count"), "vector cache total unit count"):
             raise VectorCacheError("vector cache total unit count is invalid")
         return VectorCacheState("ready", "vector cache is ready", manifest)
     except VectorCacheStaleError as error:
@@ -630,7 +634,7 @@ def _read_rows(path: Path, raw_id: str, info: dict[str, Any], dimension: int) ->
         row["vector"] = list(_validated_vector(row.get("vector", []), dimension))
         _validate_locator(row)
         rows.append(row)
-    if not rows and int(info.get("unit_count", 0)) != 0:
+    if not rows and _nonnegative_integer(info.get("unit_count"), f"vector unit count: {raw_id}") != 0:
         raise VectorCacheError(f"vector JSONL is empty: {raw_id}")
     return rows
 
@@ -641,9 +645,15 @@ def _validate_locator(row: dict[str, Any]) -> None:
         if any(key in row for key in ("segment_index", "start", "end")):
             raise VectorCacheError("headline vector locator is invalid")
     elif kind == "summary":
-        if not isinstance(row.get("segment_index"), int):
+        if type(row.get("segment_index")) is not int or row["segment_index"] < 0:
             raise VectorCacheError("summary vector locator is invalid")
-    elif not isinstance(row.get("start"), int) or not isinstance(row.get("end"), int):
+    elif (
+        type(row.get("section_index")) is not int
+        or row["section_index"] < 0
+        or type(row.get("start")) is not int
+        or type(row.get("end")) is not int
+        or not 0 <= row["start"] < row["end"]
+    ):
         raise VectorCacheError("body vector locator is invalid")
 
 
@@ -680,7 +690,13 @@ def _unit_locator(unit: VectorUnit) -> dict[str, Any]:
 
 def _validated_vector(values: Iterable[object], dimension: int) -> tuple[float, ...]:
     try:
-        vector = tuple(float(value) for value in values)
+        raw_values = tuple(values)
+    except (TypeError, ValueError) as error:
+        raise VectorCacheError("embedding vector is not numeric") from error
+    if any(isinstance(value, (bool, str, bytes)) for value in raw_values):
+        raise VectorCacheError("embedding vector must contain numeric values")
+    try:
+        vector = tuple(float(value) for value in raw_values)
     except (TypeError, ValueError) as error:
         raise VectorCacheError("embedding vector is not numeric") from error
     if len(vector) != dimension:
@@ -730,7 +746,7 @@ def _spec_from_manifest(manifest: dict[str, Any]) -> EmbeddingSpec:
         return EmbeddingSpec(
             provider=str(value["provider"]),
             model=str(value["model"]),
-            dimension=int(value["dimension"]),
+            dimension=_positive_integer(value["dimension"], "embedding dimension"),
             dtype=str(value["dtype"]),
             normalization=str(value["normalization"]),
             runtime=str(value["runtime"]),
@@ -757,9 +773,23 @@ def _canonical_json(value: object) -> str:
 
 
 def _integer(value: object, label: str) -> int:
-    if not isinstance(value, int):
+    if type(value) is not int:
         raise VectorCacheError(f"{label} must be an integer")
     return value
+
+
+def _nonnegative_integer(value: object, label: str) -> int:
+    result = _integer(value, label)
+    if result < 0:
+        raise VectorCacheError(f"{label} must be non-negative")
+    return result
+
+
+def _positive_integer(value: object, label: str) -> int:
+    result = _integer(value, label)
+    if result < 1:
+        raise VectorCacheError(f"{label} must be positive")
+    return result
 
 
 def _load_manifest(repo: Path) -> dict[str, Any]:

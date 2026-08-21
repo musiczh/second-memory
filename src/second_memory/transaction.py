@@ -10,6 +10,9 @@ from typing import Any
 from .utils import json_dumps
 
 
+_REQUIRED_ORIGINALS = {"index.md", ".kb/manifest.json", ".kb/pending.jsonl"}
+
+
 def _fsync_directory(path: Path) -> None:
     descriptor = os.open(path, os.O_RDONLY)
     try:
@@ -386,15 +389,29 @@ def _valid_journal(payload: object) -> bool:
         return False
     originals = payload["originals"]
     if not isinstance(originals, dict) or any(
-        not isinstance(path, str) or not isinstance(existed, bool)
+        not _safe_original_path(path) or not isinstance(existed, bool)
         for path, existed in originals.items()
     ):
+        return False
+    if not _REQUIRED_ORIGINALS <= set(originals):
         return False
     vectors = payload["vectors"]
     return (
         isinstance(vectors, dict)
         and set(vectors) == {"included", "original_existed", "switched"}
         and all(isinstance(value, bool) for value in vectors.values())
+    )
+
+
+def _safe_original_path(value: object) -> bool:
+    if not isinstance(value, str) or not value:
+        return False
+    path = Path(value)
+    return (
+        not path.is_absolute()
+        and value == path.as_posix()
+        and bool(path.parts)
+        and all(part not in {"", ".", ".."} for part in path.parts)
     )
 
 
@@ -412,7 +429,13 @@ def recover_transaction(repo: Path) -> str:
     if not _valid_journal(payload):
         return recover_corrupt_transaction(repo)
     tx = KnowledgeTransaction(repo, str(payload.get("session_id", "unknown")))
-    tx._originals = dict(payload.get("originals", {}))
+    originals = dict(payload["originals"])
+    required_backups = _REQUIRED_ORIGINALS | {
+        path for path, existed in originals.items() if existed
+    }
+    if any(not (tx.backup / relative).is_file() for relative in required_backups):
+        return recover_corrupt_transaction(repo)
+    tx._originals = originals
     if not tx._load_vectors_state(payload.get("vectors", {})):
         tx._load_vectors_marker()
     elif not tx._vectors_included and (
