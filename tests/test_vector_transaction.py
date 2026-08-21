@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from second_memory import transaction as transaction_module
 from second_memory.compiler import (
     add_raw,
     apply_rebuild_response,
@@ -271,6 +272,75 @@ class KnowledgeVectorTransactionTest(VectorTestRepository):
 
         self.assertEqual(original_index, (self.repo / "index.md").read_text(encoding="utf-8"))
         self.assertEqual(original, self.cache_bytes(live))
+
+    def test_absence_sentinel_is_durable_before_next_to_live_failure_and_is_cleaned(self) -> None:
+        self.compile_without_vectors()
+        live = self.repo / ".kb/vectors"
+        tx = KnowledgeTransaction(self.repo, "session-vector-absence-order")
+        tx.prepare(include_vectors=True)
+        self.stage_current_core(tx)
+        reindex_vectors(self.repo, FakeProvider(), destination=tx.vectors_next)
+        real_replace = os.replace
+        reached_next_to_live = False
+
+        def fail_next_to_live(source, destination) -> None:
+            nonlocal reached_next_to_live
+            if Path(source) == tx.vectors_next and Path(destination) == live:
+                reached_next_to_live = True
+                self.assertTrue(tx.vectors_previous.is_dir())
+                self.assertEqual([], list(tx.vectors_previous.iterdir()))
+                directory_fsync.assert_any_call(tx.root)
+                raise OSError("next to live failed after absence sentinel")
+            real_replace(source, destination)
+
+        with patch(
+            "second_memory.transaction._fsync_directory",
+            wraps=transaction_module._fsync_directory,
+        ) as directory_fsync, patch(
+            "second_memory.transaction.os.replace",
+            side_effect=fail_next_to_live,
+        ):
+            with self.assertRaisesRegex(VectorCacheError, "next to live failed after absence sentinel"):
+                tx.promote()
+
+        self.assertTrue(reached_next_to_live)
+        self.assertFalse(tx.vectors_previous.exists())
+        self.assertFalse(live.exists())
+        self.assertTrue(tx.vectors_next.exists())
+        tx.rollback()
+
+    def test_corrupt_recovery_handles_crash_after_absence_sentinel_before_live_replace(self) -> None:
+        class SimulatedCrash(BaseException):
+            pass
+
+        self.compile_without_vectors()
+        live = self.repo / ".kb/vectors"
+        tx = KnowledgeTransaction(self.repo, "session-vector-absence-crash")
+        tx.prepare(include_vectors=True)
+        self.stage_current_core(tx)
+        reindex_vectors(self.repo, FakeProvider(), destination=tx.vectors_next)
+        real_replace = os.replace
+
+        def crash_next_to_live(source, destination) -> None:
+            if Path(source) == tx.vectors_next and Path(destination) == live:
+                raise SimulatedCrash
+            real_replace(source, destination)
+
+        with patch("second_memory.transaction.os.replace", side_effect=crash_next_to_live):
+            with self.assertRaises(SimulatedCrash):
+                tx.promote()
+
+        self.assertTrue(tx.vectors_previous.is_dir())
+        self.assertEqual([], list(tx.vectors_previous.iterdir()))
+        self.assertTrue(tx.vectors_next.exists())
+        self.assertFalse(live.exists())
+        tx.journal.write_text("{", encoding="utf-8")
+        tx.vectors_marker.unlink()
+
+        self.assertEqual("rolled_back_corrupt_journal", recover_transaction(self.repo))
+
+        self.assertFalse(live.exists())
+        self.assertFalse(tx.root.exists())
 
     def test_vector_replaces_fsync_both_parent_directories_before_core_switch(self) -> None:
         self.compile_without_vectors()

@@ -282,13 +282,13 @@ class KnowledgeTransaction:
 
         vectors = self.repo / ".kb" / "vectors"
         try:
-            if vectors.exists():
+            if self._vectors_original_existed:
                 _replace_directory(vectors, self.vectors_previous)
-            _replace_directory(self.vectors_next, vectors)
-            if not self._vectors_original_existed:
+            else:
                 # Empty previous records that this transaction created the only live cache.
                 self.vectors_previous.mkdir()
                 _fsync_directory(self.root)
+            _replace_directory(self.vectors_next, vectors)
         except OSError as error:
             try:
                 self._restore_failed_vector_swap()
