@@ -218,7 +218,12 @@ def search_vectors(
     repo: Path,
     query: str,
     provider: EmbeddingProvider | None = None,
+    *,
+    disabled_unit_types: set[str] | frozenset[str] = frozenset(),
 ) -> VectorSearchResult:
+    unknown = set(disabled_unit_types) - {"headline", "summary", "body"}
+    if unknown:
+        raise ValueError("unknown vector unit type: " + ", ".join(sorted(unknown)))
     repo = Path(repo)
     state = vector_status(repo)
     if not state.ready or state.manifest is None:
@@ -243,6 +248,8 @@ def search_vectors(
             entry = entries[raw_id]
             for row in rows:
                 unit = _row_unit(row)
+                if unit.kind in disabled_unit_types:
+                    continue
                 score = math.fsum(left * right for left, right in zip(query_vector, unit.vector, strict=True))
                 candidates.append(replace(unit, text=resolve_vector_unit_text(entry, unit), score=score))
     except Exception as error:

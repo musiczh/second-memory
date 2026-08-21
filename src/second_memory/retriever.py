@@ -79,7 +79,12 @@ def _vector_raw_entry(
     return entry
 
 
-def search_level1(repo: Path, query: str) -> dict[str, Any]:
+def search_level1(
+    repo: Path,
+    query: str,
+    *,
+    disabled_unit_types: set[str] | frozenset[str] = frozenset(),
+) -> dict[str, Any]:
     load_config(repo)
     terms = query_terms(query)
     candidates = []
@@ -131,7 +136,10 @@ def search_level1(repo: Path, query: str) -> dict[str, Any]:
             })
     candidates.sort(key=lambda item: (-int(item["score"]), str(item["id"])))
     keyword_result = {"query": query, "candidates": candidates[:10], "hits": rg_hits(repo, query)}
-    keyword_result["supplemental_raw"] = vector_supplement(repo, search_vectors(repo, query))
+    keyword_result["supplemental_raw"] = vector_supplement(
+        repo,
+        search_vectors(repo, query, disabled_unit_types=disabled_unit_types),
+    )
     return keyword_result
 
 

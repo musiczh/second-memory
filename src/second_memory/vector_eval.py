@@ -158,8 +158,6 @@ def rank_vector_units(
             continue
         seen.add(raw_id)
         ranking.append(raw_id)
-        if len(ranking) == 5:
-            break
     return ranking
 
 
@@ -243,7 +241,11 @@ def evaluate_repository(
     unknown_raw_ids = sorted({raw_id for row in gold for raw_id in row.relevant_raw_ids} - set(cached_raws))
     if unknown_raw_ids:
         raise GoldValidationError("gold references Raw IDs outside the ready vector cache: " + ", ".join(unknown_raw_ids))
-    report = evaluate_gold(gold, lambda query: search_level1(repo, query), disabled_unit_types=disabled_unit_types)
+    report = evaluate_gold(
+        gold,
+        lambda query: search_level1(repo, query, disabled_unit_types=disabled_unit_types),
+        disabled_unit_types=disabled_unit_types,
+    )
     return {
         "gold": str(Path(gold_path)),
         "cache": {

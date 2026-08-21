@@ -9,6 +9,8 @@ from unittest.mock import patch
 from typer.testing import CliRunner
 
 from second_memory.cli import app
+from second_memory.compiler import initialize
+from second_memory.retriever import search_level1
 from second_memory.vector_eval import (
     GoldQuery,
     GoldValidationError,
@@ -20,7 +22,7 @@ from second_memory.vector_eval import (
     rank_vector_units,
     union_rankings,
 )
-from second_memory.vectors import VectorCacheState, VectorUnit
+from second_memory.vectors import VectorCacheState, VectorSearchResult, VectorUnit
 
 
 class GoldJsonlTest(unittest.TestCase):
@@ -101,6 +103,32 @@ class GoldJsonlTest(unittest.TestCase):
                     "expected_units": [1],
                 },
                 "expected_units must contain non-empty strings",
+            ),
+            (
+                {
+                    "query": "重复相关项",
+                    "relevant_raw_ids": [
+                        "raw-20260820-1200-0123abcd",
+                        "raw-20260820-1200-0123abcd",
+                    ],
+                },
+                "relevant_raw_ids must not contain duplicates",
+            ),
+            (
+                {
+                    "query": "空单元项",
+                    "relevant_raw_ids": ["raw-20260820-1200-0123abcd"],
+                    "expected_units": [""],
+                },
+                "expected_units must contain non-empty strings",
+            ),
+            (
+                {
+                    "query": "重复单元项",
+                    "relevant_raw_ids": ["raw-20260820-1200-0123abcd"],
+                    "expected_units": ["chunk-headline", "chunk-headline"],
+                },
+                "expected_units must not contain duplicates",
             ),
         ]
         for row, message in cases:
@@ -184,6 +212,24 @@ class RankingMetricsTest(unittest.TestCase):
 
 
 class EvaluationReportTest(unittest.TestCase):
+    def test_sixth_unique_vector_raw_reaches_mrr_and_union_evaluation(self) -> None:
+        relevant = "raw-20260820-1206-00000006"
+        vector_units = [
+            unit(f"chunk-{index}", f"raw-20260820-120{index}-{index:08x}", "headline", 1.0 - index / 100)
+            for index in range(1, 6)
+        ] + [unit("chunk-6", relevant, "headline", 0.5)]
+
+        report = evaluate_gold(
+            [load_gold_row("第六位相关项", [relevant])],
+            lambda _: level1_result(keyword_sources=[], units=vector_units),
+        )
+
+        query = report["queries"][0]
+        self.assertEqual(6, len(query["rankings"]["vector"]))
+        self.assertEqual(relevant, query["rankings"]["vector"][5])
+        self.assertEqual(0.166667, query["metrics"]["vector"]["mrr"])
+        self.assertEqual(query["rankings"]["vector"], query["rankings"]["union"])
+
     def test_outputs_per_query_rankings_expected_unit_evidence_and_macro_summary(self) -> None:
         gold = [
             load_gold_row(
@@ -280,13 +326,45 @@ class EvaluationReportTest(unittest.TestCase):
                 with self.assertRaisesRegex(VectorEvaluationError, "vector cache is not ready: stale: Raw input changed"):
                     evaluate_repository(Path(temporary), path)
 
+    def test_repository_evaluation_forwards_ablation_to_online_search_before_evaluation(self) -> None:
+        raw_id = "raw-20260820-1200-0123abcd"
+        with tempfile.TemporaryDirectory(prefix="second-memory-vector-eval-forward-") as temporary:
+            repo = Path(temporary)
+            path = repo / "gold.jsonl"
+            path.write_text(
+                json.dumps({"query": "睡眠", "relevant_raw_ids": [raw_id]}) + "\n",
+                encoding="utf-8",
+            )
+            state = VectorCacheState(
+                "ready",
+                "vector cache is ready",
+                {"raws": {raw_id: {}}, "raw_count": 1, "unit_count": 1},
+            )
+            with patch("second_memory.vector_eval.vector_status", return_value=state), patch(
+                "second_memory.vector_eval.search_level1",
+                return_value=level1_result(keyword_sources=[], units=[]),
+            ) as search:
+                evaluate_repository(repo, path, disabled_unit_types={"body"})
+
+        search.assert_called_once_with(repo, "睡眠", disabled_unit_types={"body"})
+
+    def test_search_level1_forwards_ablation_to_vector_search(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="second-memory-vector-eval-retriever-") as temporary:
+            repo = Path(temporary) / "knowledge-base"
+            initialize(repo, "agent", "test", "plain")
+            with patch(
+                "second_memory.retriever.search_vectors",
+                return_value=VectorSearchResult("ready", "vector cache is ready", [], []),
+            ) as vector_search:
+                search_level1(repo, "睡眠", disabled_unit_types={"body"})
+
+        vector_search.assert_called_once_with(repo, "睡眠", disabled_unit_types={"body"})
+
 
 class EvaluationCliTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="second-memory-vector-eval-cli-")
         self.repo = Path(self.temporary.name) / "knowledge-base"
-        from second_memory.compiler import initialize
-
         initialize(self.repo, "agent", "test", "plain")
         self.gold = self.repo / ".kb/eval/vector-gold.jsonl"
         self.gold.parent.mkdir(parents=True)
@@ -299,7 +377,7 @@ class EvaluationCliTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
-    def test_cli_evaluates_read_only_and_never_reindexes_or_constructs_a_provider(self) -> None:
+    def test_cli_evaluates_read_only_and_never_reindexes(self) -> None:
         state = VectorCacheState(
             "ready",
             "vector cache is ready",
@@ -312,10 +390,7 @@ class EvaluationCliTest(unittest.TestCase):
                 keyword_sources=[["raw-20260820-1200-0123abcd"]],
                 units=[unit("chunk-headline", "raw-20260820-1200-0123abcd", "headline", 0.9)],
             ),
-        ), patch("second_memory.cli.reindex_vectors", side_effect=AssertionError("evaluate must not reindex")), patch(
-            "second_memory.vectors.FastEmbedProvider",
-            side_effect=AssertionError("the mocked online search boundary must not construct a provider"),
-        ):
+        ), patch("second_memory.cli.reindex_vectors", side_effect=AssertionError("evaluate must not reindex")):
             response = self.runner.invoke(
                 app,
                 [

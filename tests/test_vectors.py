@@ -421,6 +421,51 @@ class VectorRepositoryTest(unittest.TestCase):
             tied_ids = [unit.chunk_id for unit in result.units if unit.score == score]
             self.assertEqual(sorted(tied_ids), tied_ids)
 
+    def test_ablation_filters_body_before_scan_threshold_and_unit_limits(self) -> None:
+        raw_ids = self.compile_raws([
+            (f"消融原料{index:02d}", f"消融原料{index:02d}" + "正文" * 180)
+            for index in range(17)
+        ])
+        relevant_raw_id = raw_ids[-1]
+        config = load_config(self.repo)
+        high_body_count = sum(
+            unit.kind == "body"
+            for raw_id in raw_ids[:-1]
+            for unit in build_vector_units(self.raw_entry(raw_id), config)
+        )
+        self.assertGreater(high_body_count, int(config["vector_scan_k"]))
+        self.assertGreater(high_body_count, int(config["vector_unit_limit"]))
+        provider = FakeProvider()
+        reindex_vectors(self.repo, provider)
+
+        for raw_id in raw_ids:
+            def rescore(rows, *, current_raw_id=raw_id):
+                for row in rows:
+                    score = 0.9 if current_raw_id != relevant_raw_id and row["kind"] == "body" else 0.1
+                    if current_raw_id == relevant_raw_id and row["kind"] == "headline":
+                        score = 0.8
+                    row["vector"] = embedding(score)
+
+            self.rewrite_cached_rows(raw_id, rescore)
+
+        baseline = search_vectors(self.repo, "消融查询", provider)
+        ablated = search_vectors(self.repo, "消融查询", provider, disabled_unit_types={"body"})
+
+        self.assertEqual(10, len(baseline.units))
+        self.assertTrue(all(unit.kind == "body" for unit in baseline.units))
+        self.assertNotIn(relevant_raw_id, {unit.raw_id for unit in baseline.units})
+        self.assertEqual(relevant_raw_id, ablated.units[0].raw_id)
+        self.assertEqual("headline", ablated.units[0].kind)
+        self.assertIn(relevant_raw_id, {raw["raw_id"] for raw in ablated.raws})
+
+    def test_search_rejects_unknown_ablation_unit_type_before_provider_initialization(self) -> None:
+        with patch(
+            "second_memory.vectors.FastEmbedProvider",
+            side_effect=AssertionError("invalid ablation must fail before provider initialization"),
+        ):
+            with self.assertRaisesRegex(ValueError, "unknown vector unit type: title"):
+                search_vectors(self.repo, "查询", disabled_unit_types={"title"})
+
     def test_destination_build_is_complete_and_does_not_replace_the_live_cache(self) -> None:
         self.compile_raws([("目标目录", "目标目录正文" * 12)])
         provider = FakeProvider()
