@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 from second_memory import frontmatter
 from second_memory.compiler import add_raw, apply_response, build_compile_request, load_manifest
 from second_memory.wiki import TEMPLATE_PATH, build_wiki_model, render_html, render_markdown
+from second_memory.vectors import VectorCacheError
 
 from tests.helpers import RepositoryTestCase, content, event_semantics, raw_annotation_fields
 
@@ -118,6 +120,48 @@ class WikiTest(RepositoryTestCase):
         self.assertIn("主题组织问题", template)
         self.assertIn("排除边界", template)
         self.assertNotIn("animation: enter", template)
+
+    def test_raw_summary_presentation_uses_headline_and_ordered_segments(self) -> None:
+        frontmatter.write_document(self.repo / "raw" / "2026" / "08" / "raw-segments.md", {
+            "id": "raw-segments",
+            "type": "raw",
+            "title": "分段摘要记录",
+            "created": "2026-08-10T09:00:00+08:00",
+            "event_date": "2026-08-10",
+            "tags": ["summary"],
+            "summary": "独立 headline 摘要",
+            "summary_segments": ["第一段扫描摘要", "第二段扫描摘要"],
+        }, "分段摘要原文")
+
+        model = build_wiki_model(self.repo)
+        raw = model["raws"]["raw-segments"]
+
+        self.assertEqual("独立 headline 摘要", raw["headline"])
+        self.assertEqual(["第一段扫描摘要", "第二段扫描摘要"], raw["summary_segments"])
+        self.assertTrue(raw["summary_segments_explicit"])
+        static_html = render_html(model).split('<script type="application/json"', 1)[0]
+        self.assertLess(static_html.index("第一段扫描摘要"), static_html.index("第二段扫描摘要"))
+        self.assertEqual(1, static_html.count("独立 headline 摘要"))
+
+    def test_legacy_raw_summary_falls_back_once_without_duplication(self) -> None:
+        frontmatter.write_document(self.repo / "raw" / "2026" / "08" / "raw-legacy-summary.md", {
+            "id": "raw-legacy-summary",
+            "type": "raw",
+            "title": "旧摘要记录",
+            "created": "2026-08-11T09:00:00+08:00",
+            "event_date": "2026-08-11",
+            "tags": ["legacy"],
+            "summary": "旧 Raw 唯一摘要",
+        }, "旧摘要原文")
+
+        model = build_wiki_model(self.repo)
+        raw = model["raws"]["raw-legacy-summary"]
+
+        self.assertEqual("旧 Raw 唯一摘要", raw["headline"])
+        self.assertEqual(["旧 Raw 唯一摘要"], raw["summary_segments"])
+        self.assertFalse(raw["summary_segments_explicit"])
+        static_html = render_html(model).split('<script type="application/json"', 1)[0]
+        self.assertEqual(1, static_html.count("旧 Raw 唯一摘要"))
 
     def test_v24_entity_source_groups_require_explicit_paths_and_raw_incoming_topics(self) -> None:
         raw_ids = ["raw-direct", "raw-event-edge", "raw-event-semantics", "raw-insight", "raw-shared"]
@@ -321,7 +365,11 @@ class WikiTest(RepositoryTestCase):
             "candidates": [{"kind": "merge", "node_ids": ["project"], "reason": "待更多证据"}],
             "consolidation_memo": request["context"]["consolidation_memo"],
         }
-        result = apply_response(self.repo, plan, command="compile")
+        with patch(
+            "second_memory.compiler._stage_incremental_vectors",
+            side_effect=VectorCacheError("test model unavailable"),
+        ):
+            result = apply_response(self.repo, plan, command="compile")
         model = build_wiki_model(self.repo)
 
         self.assertEqual(3, model["counts"]["nodes"])

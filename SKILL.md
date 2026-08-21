@@ -15,6 +15,7 @@ This skill connects the host Agent to a local Markdown + Git personal knowledge 
 - When a successful apply envelope carries a top-level `tip`, relay that one-time usage suggestion naturally after the recap. Do not explain the tip mechanism. The CLI records seen tips transactionally in the manifest; never create or edit a separate tips state file.
 - Never edit a file under `raw/` directly. Use `add` for new user content. The CLI may add validated metadata while preserving the raw body hash and restoring read-only permissions.
 - Never send the whole raw archive for ordinary search or consolidation. Search Level 1 first; request Level 2 only for relevant candidates. Consolidation uses the bounded batch supplied by the CLI.
+- Vector retrieval is supplemental and read-only. A `pending`, `stale`, `missing`, `corrupt`, or `disabled` cache produces an explicit empty vector catalog and never blocks compile, consolidation, or topic refresh.
 - The CLI never calls an LLM. For compile, rebuild, consolidate, update, review, and Level-2 search, emit a request, reason over only that request, then return JSON matching its `response_schema`.
 - Preserve the `schema_version`, `session_id`, and `mode` from the emitted request. Never reuse an old response or infer a different apply mode.
 - Incremental compile and rebuild replay may create or update entity, event, and statement nodes. They may record merge/split candidates, but must not execute structural merge/split actions or create topics.
@@ -58,9 +59,9 @@ printf '%s' "$TEXT" | second-memory add \
 second-memory compile --emit-request --json
 ```
 
-Read `data.llm_request`. Return one V2.4 contract `CompilePlan v2` matching its schema:
+Read `data.llm_request`. Return one V2.5 contract `CompilePlan v2` matching its schema:
 
-- Annotate each consumed raw with a concise summary, importance, optional emotion, and three explicit arrays: `mentions` for durable referents, `occurrences` for possible user-centered events, and `claims` for possible insight threads. Empty arrays are valid only when no action of the corresponding entity/event/statement type cites that raw; omitting a channel is never valid.
+- Annotate each consumed raw with a 60–100 character headline `summary`, one or more ordered 50–300 character `summary_segments`（short Raw exception applies）, `body_groups` covering every requested `body_atom`, importance, optional emotion, and three explicit arrays: `mentions` for durable referents, `occurrences` for possible user-centered events, and `claims` for possible insight threads. Empty annotation channels are valid only when no action of the corresponding entity/event/statement type cites that raw; omitting a response field is never valid.
 - Returning zero node actions and zero `belongs_to` edges is valid when all three channels are empty. Prefer that outcome over promoting a routine chat, routine reading trigger, momentary state, or generic observation into a durable node.
 - Reuse an existing node with `target_id` when the resolver context identifies it.
 - Use a plan-local `ref` for a new node. The CLI owns final IDs and paths.
@@ -135,7 +136,7 @@ Compiled raw IDs accumulate in a bounded consolidation queue. A batch becomes du
 second-memory consolidate --emit-request --json
 ```
 
-When `data.llm_request` is present, reason only over its bounded raw annotations, compact index, aliases, candidates, related one-hop nodes, graph-wide `member_catalog`／`raw_catalog`, and `source_dates`. The full-library catalogs contain compiled node content and raw annotations, never raw bodies. A consolidation plan may:
+When `data.llm_request` is present, reason only over its bounded raw annotations, compact index, aliases, candidates, related one-hop nodes, graph-wide `member_catalog`／`raw_catalog`, read-only `vector_support_catalog`, and `source_dates`. The full-library catalogs contain compiled node content and raw annotations, never raw bodies. `vector_support_catalog` contains only bounded matches for organizing questions already persisted in topic contracts or stable topic candidates; it never changes the core catalogs. A consolidation plan may:
 
 - create a qualified topic;
 - merge nodes that confidently represent the same object;
@@ -169,6 +170,14 @@ For `life_domain`, relationship type is part of the boundary: partner／parent-c
 
 After the forward member check, run a reverse completeness audit over every unassigned statement and every persisted topic candidate. Test complete content and non-superseded evolution against every organizing question. If a recurring cohort is coherent but not ready, return one stable topic candidate containing its strongest node IDs and an explicit status/reason. Exclusions remain local membership boundaries; candidates record graph-wide themes that need more evidence. Neither mechanism permits forcing a node into a topic.
 
+When the Host Agent proposes a new organizing question that is not already persisted, it must first run:
+
+```bash
+second-memory vectors search --query "$ORGANIZING_QUESTION" --json
+```
+
+This explicit vector search is the workflow for a new organizing question. Treat every returned unit as candidate evidence only: it does not create membership, actions, edges, or `belongs_to` links. A Raw or compiled node becomes a member only after its own evidence passes the unchanged TopicContract member, statement, facet, and independent Raw capture thresholds. Never invent an organizing query from a candidate title or dump all cached vector units.
+
 Every topic action must return `source_ids=[]`. Topic sources are the exact union of current contained members' recursive raw sources; never copy old topic sources or append sources from removed members.
 
 Return `raw_annotations=[]` in every consolidation response. Consolidation consumes existing bounded annotations but cannot rewrite any raw annotation.
@@ -190,7 +199,7 @@ When the user asks to review, repair, or regenerate topic organization, use the 
 second-memory topics --emit-request --json
 ```
 
-The request includes every compiled node with content, source dates, compact raw annotations, existing topic memberships, and persisted candidates. It never includes raw bodies. Audit the old topics, then output a complete replacement topic set using only `create` topic actions and topic `contains` edges whose targets may be raw, entity, event, statement, or a plan-local child topic. Use plan-local refs instead of copying old IDs; the CLI may reuse a deterministic topic ID when the regenerated title is stable, but its content and membership are still fully replaced. Returning no topic is valid only with explicit candidate dispositions explaining the recurring cohorts reviewed. Before apply, perform both the member direct-contribution pass and the graph-wide recurring-cohort pass.
+The request includes every compiled node with content, source dates, compact raw annotations, existing topic memberships, persisted candidates, and an optional read-only `vector_support_catalog` for already persisted organizing questions. It never includes raw bodies. An unavailable vector cache leaves that catalog empty with status and reason and does not block the request. Audit the old topics, then output a complete replacement topic set using only `create` topic actions and topic `contains` edges whose targets may be raw, entity, event, statement, or a plan-local child topic. Use plan-local refs instead of copying old IDs; the CLI may reuse a deterministic topic ID when the regenerated title is stable, but its content and membership are still fully replaced. Returning no topic is valid only with explicit candidate dispositions explaining the recurring cohorts reviewed. Before apply, perform both the member direct-contribution pass and the graph-wide recurring-cohort pass.
 
 Apply the unchanged response:
 

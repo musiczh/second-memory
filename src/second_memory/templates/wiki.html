@@ -923,6 +923,8 @@
   function renderRaw(raw) {
     var view = element('<article class="view"></article>');
     var ann = raw.annotations || {};
+    var headline = raw.headline || ann.summary || "";
+    var summarySegments = raw.summary_segments_explicit && Array.isArray(raw.summary_segments) ? raw.summary_segments : [];
     var toc = [];
     var body = "";
 
@@ -937,9 +939,14 @@
     body += '<section class="block" id="sec-lead"><div class="type-line">' + typeTag("raw") + '</div>' +
       '<h1 class="doc-title">' + esc(raw.title) + '</h1>' +
       (pills.length ? '<div class="pills">' + pills.join("") + '</div>' : "") +
-      (ann.summary ? '<div class="tldr raw-lead"><span class="lead-label">这条记录讲什么</span><p>' + esc(ann.summary) + '</p></div>' : "") +
+      (headline ? '<div class="tldr raw-lead"><span class="lead-label">这条记录讲什么</span><p>' + esc(headline) + '</p></div>' : "") +
       '</section>';
     toc.push({ id: "sec-lead", label: "导读" });
+
+    if (summarySegments.length) {
+      body += '<section class="block" id="sec-summary-segments"><div class="section-title"><h2>摘要正文</h2><span>' + summarySegments.length + ' 段</span></div><ol class="row-highlights">' + summarySegments.map(function (segment) { return '<li>' + esc(segment) + '</li>'; }).join("") + '</ol></section>';
+      toc.push({ id: "sec-summary-segments", label: "摘要正文" });
+    }
 
     // ② 编译要点
     var digest = digestCards(raw);

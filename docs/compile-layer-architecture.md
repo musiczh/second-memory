@@ -1,8 +1,52 @@
 # 编译层数据组织与存储架构设计
 
-> 状态：V2.4 实施规范（继承 V2.3 事件与详情合同，覆盖 V2.2 主题成员模型）
-> 适用版本：`KB_VERSION >= 2.4.0`
-> 关联代码：`src/second_memory/compiler.py`、`retriever.py`、`recap.py`、`promptio.py`
+> 状态：V2.5 实施规范（继承 V2.4 TopicContract，增加 Raw 分段与本地向量补充召回）
+> 适用版本：`KB_VERSION >= 2.5.0`
+> 关联代码：`src/second_memory/compiler.py`、`chunking.py`、`vectors.py`、`retriever.py`、`wiki.py`
+
+## 0.0 V2.5 Raw 向量补充召回（优先级最高）
+
+V2.5 只为 Raw 增加可重建的本地向量缓存，不改变 V2.4 的 TopicContract 门槛、成员校验、action、edge 或来源闭包。主链路固定为：
+
+```text
+immutable Raw body
+        │
+        ▼
+atomize（确定性 body_atoms 与 code-point offsets）
+        │
+        ▼
+annotate（headline summary + ordered summary_segments + body_groups）
+        │
+        ▼
+chunk（只在持久化 body_sections 内切片，定位信息可回切 Raw）
+        │
+        ▼
+embed（固定本地 BGE／CPU／float32／L2 normalized）
+        │
+        ▼
+cache（.kb/vectors，JSONL 只保存 locator + vector，不复制正文）
+        │
+        ▼
+supplemental retrieval（有界 top units，回切短 snippet，只作候选证据）
+```
+
+事务边界与降级边界彼此独立：
+
+```text
+核心事务：Raw annotation + compiled nodes + edges + manifest + Wiki
+                            │
+                            ├─ vector next ready ─▶ 与核心投影一起原子切换
+                            │
+                            └─ pending/stale/missing/corrupt/disabled
+                                             └─▶ 核心事务继续提交，向量目录不覆盖
+```
+
+- 核心知识仍以不可变 Raw 和可审计编译投影为准；`.kb/vectors/` 是 Git 忽略、可删除重建的辅助缓存。
+- 普通 Apply、search、status 只允许使用本地模型；只有显式 `vectors reindex` 可以进入模型下载边界。缓存非 ready 时，检索输出和 Topic／Consolidation 请求返回明确 `status/reason` 与空向量结果，不能阻断核心工作流。
+- `search_level1` 的关键词／图谱候选、分数和顺序保持不变，向量结果只追加到 `supplemental_raw`。Level 2 只携带 top unit locator、短 snippet 和有界 Raw 元数据，不发送整篇 Raw。
+- Topic／Consolidation 的 `vector_support_catalog` 只对已有 topic contract 或稳定 topic candidate 中显式保存的 `organizing_question` 做有界检索。不存在持久化问题时返回空目录；Host Agent 提出全新组织问题时，先显式执行 `second-memory vectors search`。
+- 向量命中只提供 `query`、来源 topic／candidate ID、`raw_id`、locator、短 snippet、score 与 cache status。它不进入 `member_catalog/raw_catalog`，不自动产生成员、action、edge 或 `belongs_to`；成员仍须逐项通过 V2.4 TopicContract。
+- Wiki Raw 详情把 `summary` 作为 headline，并按原顺序展示 `summary_segments`；旧 Raw 缺少 segments 时只回退显示一次 headline，避免重复。
 
 ## 0. V2.4 实体覆盖、主题提炼与理解层契约（优先级最高）
 

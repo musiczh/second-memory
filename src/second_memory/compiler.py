@@ -48,9 +48,10 @@ from .tips import next_tip
 from .transaction import KnowledgeTransaction, recover_transaction, transaction_state
 from .topics import validate_materialized_topic_contracts, validate_topic_plan
 from .utils import json_dumps, now_local, parse_date, parse_temporal_anchor, relpath, sha256_text, short_hash, slugify
-from .vectors import VectorCacheError, VectorCacheState, reindex_vectors, vector_status
+from .vectors import VectorCacheError, VectorCacheState, reindex_vectors, search_vectors, vector_status
 
 CONSOLIDATION_BATCH_SIZE = 10
+VECTOR_SUPPORT_SNIPPET_LIMIT = 300
 REBUILD_WORKSPACE_NAME = ".second-memory-rebuild-workspace-v2"
 RAW_COMPILED_FIELDS = {
     "compiled", "summary", "summary_segments", "body_sections", "importance", "emotion",
@@ -567,9 +568,10 @@ def build_consolidation_request(
                 if str(edge.get("target")) in nodes:
                     related_ids.add(str(edge["target"]))
     manifest = load_manifest(repo)
+    vector_support_catalog = build_vector_support_catalog(repo, nodes, manifest)
     context = {
         "schema_version": 2,
-        "contract_version": "2.4-entity-topic-understanding",
+        "contract_version": "2.5-raw-vector-support",
         "session_id": session_id,
         "mode": "consolidate",
         "batch_size": len(entries),
@@ -598,6 +600,7 @@ def build_consolidation_request(
             raw_payload(entry, include_body=False)
             for entry in sorted(raw_lookup(repo).values(), key=lambda item: item.id)
         ],
+        "vector_support_catalog": vector_support_catalog,
         "source_dates": {
             raw_id: entry.event_date
             for raw_id, entry in sorted(raw_lookup(repo).items())
@@ -607,7 +610,8 @@ def build_consolidation_request(
         "consolidation_memo": consolidation_state(manifest)["memo"],
     }
     instructions = (
-        "请仅基于批次注解、compact_index、候选项、一跳节点、全库 member_catalog／raw_catalog 与 source_dates 输出 CompilePlan v2.4（顶层 schema_version 仍为 2），不得假设未提供的 raw 正文。"
+        "请仅基于批次注解、compact_index、候选项、一跳节点、全库 member_catalog／raw_catalog、只读 vector_support_catalog 与 source_dates 输出 CompilePlan v2.5（顶层 schema_version 仍为 2），不得假设未提供的 raw 正文。"
+        "vector_support_catalog 只是既有 organizing_question 的补充候选证据，不得据此自动生成成员、action、edge 或 belongs_to；所有成员仍须独立通过原 TopicContract。"
         "本批 Raw 只决定全库审计时机，不决定主题边界或数量。审查全部成员和已有候选：真正反复出现的讨论簇必须创建／更新主题，或返回带稳定 candidate_id、topic_kind、pending|watching|rejected|materialized 状态和理由的 topic 候选。不得静默遗漏旧候选。"
         "topic 是人类优先阅读的全库组织视角，不是更大的洞察。life_domain 可组织 AI 协作等稳定领域，longitudinal_arc 可组织睡眠等长期变化；cross_domain_pattern 仅在同一机制确实跨域复现时使用。直属成员可为 raw、entity、event、statement 或 child topic，至少五个成员、两个 statement、两个 facet、三个独立 raw capture；longitudinal_arc 另需十四天。"
         "每个 topic 使用 membership_mode=replace、source_ids=[]，完整返回 attrs.topic_contract：topic_kind、organizing_question、facet_relationship、boundary_rule、facets[].member_refs、覆盖全部成员的 member_rationales 和可为空的 exclusions。每个 rationale.reason 必须复用所分配 facet 的准确名称，并从成员自身可用内容复制 supporting_excerpt；成员自己的 content/evidence 必须直接回答 organizing_question 并支持该 facet，不得由 rationale 发明桥接。topic sources 由 contains 成员自动推导。"
@@ -644,9 +648,10 @@ def build_topic_request(repo: Path) -> dict[str, Any]:
     nodes, _ = load_nodes(repo)
     lookup = raw_lookup(repo)
     session_id = create_session_id(repo, "topics", [])
+    manifest = load_manifest(repo)
     context = {
         "schema_version": 2,
-        "contract_version": "2.4-entity-topic-understanding",
+        "contract_version": "2.5-raw-vector-support",
         "session_id": session_id,
         "mode": "topics",
         "statement_catalog": [
@@ -667,17 +672,19 @@ def build_topic_request(repo: Path) -> dict[str, Any]:
             raw_payload(entry, include_body=False)
             for entry in sorted(lookup.values(), key=lambda item: item.id)
         ],
+        "vector_support_catalog": build_vector_support_catalog(repo, nodes, manifest),
         "existing_topics": [
             node_payload(node, include_edges=True)
             for node in sorted(nodes.values(), key=lambda item: item.id)
             if node.type == "topic"
         ],
         "source_dates": {raw_id: entry.event_date for raw_id, entry in sorted(lookup.items())},
-        "existing_candidates": candidates_payload(load_manifest(repo).get("candidates", [])),
-        "consolidation_memo": consolidation_state(load_manifest(repo))["memo"],
+        "existing_candidates": candidates_payload(manifest.get("candidates", [])),
+        "consolidation_memo": consolidation_state(manifest)["memo"],
     }
     instructions = (
-        "请审计 existing_topics、existing_candidates 和完整 member_catalog／raw_catalog，输出整个 topic 层的替换方案。不要复制旧 topic ID；只提供 ref 与标题，CLI 可在标题稳定时复用确定性 ID。不要修改 entity、event、statement 或 raw。"
+        "请审计 existing_topics、existing_candidates、完整 member_catalog／raw_catalog 与只读 vector_support_catalog，输出整个 topic 层的 CompilePlan v2.5 替换方案。不要复制旧 topic ID；只提供 ref 与标题，CLI 可在标题稳定时复用确定性 ID。不要修改 entity、event、statement 或 raw。"
+        "vector_support_catalog 只补充既有 organizing_question 的候选证据，不得据此自动生成成员、action、edge 或 belongs_to；所有成员仍须独立通过原 TopicContract。"
         "只允许 create topic action 与 topic contains 边，目标可为 raw、entity、event、statement 或 plan-local child topic。主题可以多父，最大深度三。若证据不足以创建主题，必须返回稳定 topic candidate 的明确状态和理由，不能静默返回空。"
         "topic 是比洞察更高维的稳定阅读视角，不是批次摘要或更大的洞察。高维不等于跨域：AI 协作可为 life_domain，睡眠可为 longitudinal_arc，只有同一机制确实跨域复现才使用 cross_domain_pattern。每个主题至少五个直属成员、两个 statement、两个 facet、三个独立 raw capture；longitudinal_arc 另需十四天跨度。"
         "每个 action 使用 membership_mode=replace、source_ids=[]，提供完整 attrs.topic_contract：topic_kind、organizing_question、facet_relationship、boundary_rule、facets[].member_refs、member_rationales、可为空的 exclusions。每个 rationale.reason 必须复用所分配 facet 的准确名称，并从成员自身内容复制 supporting_excerpt；成员自己的 content/evidence 必须直接回答 organizing_question 并支持该 facet，不得由 rationale 发明桥接。topic sources 由 contains 成员自动推导。"
@@ -689,6 +696,70 @@ def build_topic_request(repo: Path) -> dict[str, Any]:
     response_schema = compile_response_schema(session_id, "topics")
     response_schema["raw_annotations"] = []
     return llm_request("topics", default_agents_rules(), context, instructions, response_schema)
+
+
+def build_vector_support_catalog(
+    repo: Path,
+    nodes: dict[str, Node],
+    manifest: dict[str, Any],
+) -> dict[str, Any]:
+    """Return bounded read-only Raw evidence for persisted organizing questions."""
+    state = vector_status(repo)
+    catalog: dict[str, Any] = {
+        "status": state.status,
+        "reason": state.reason,
+        "entries": [],
+    }
+    if not state.ready:
+        return catalog
+
+    queries: list[tuple[str, str, str]] = []
+    for node in sorted(nodes.values(), key=lambda item: item.id):
+        if node.type != "topic":
+            continue
+        contract = node.attrs.get("topic_contract")
+        query = str(contract.get("organizing_question", "")).strip() if isinstance(contract, dict) else ""
+        if query:
+            queries.append(("topic_id", node.id, query))
+    for candidate in sorted(candidates_payload(manifest.get("candidates", [])), key=lambda item: item["candidate_id"]):
+        if candidate.get("kind") != "topic" or candidate.get("status") not in {"pending", "watching"}:
+            continue
+        query = str(candidate.get("organizing_question", "")).strip()
+        if query:
+            queries.append(("candidate_id", str(candidate["candidate_id"]), query))
+
+    if not queries:
+        catalog["reason"] = "no persisted organizing query is available"
+        return catalog
+
+    unit_limit = int(load_config(repo)["vector_unit_limit"])
+    entries: list[dict[str, Any]] = []
+    for source_key, source_id, query in queries:
+        result = search_vectors(repo, query)
+        if result.status != "ready":
+            return {
+                "status": result.status,
+                "reason": result.reason,
+                "entries": [],
+            }
+        for unit in result.units[:unit_limit]:
+            entries.append({
+                "query": query,
+                source_key: source_id,
+                "raw_id": unit.raw_id,
+                "locator": {
+                    "chunk_id": unit.chunk_id,
+                    "kind": unit.kind,
+                    "segment_index": unit.segment_index,
+                    "section_index": unit.section_index,
+                    "start": unit.start,
+                    "end": unit.end,
+                },
+                "snippet": unit.text[:VECTOR_SUPPORT_SNIPPET_LIMIT],
+                "score": float(unit.score or 0.0),
+            })
+    catalog["entries"] = entries
+    return catalog
 
 
 def clean_raw_document(entry: RawEntry) -> str:

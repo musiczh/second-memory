@@ -385,6 +385,16 @@ def _raw_model(raw: RawEntry, nodes: dict[str, Node], edges: list[dict[str, Any]
         and edge["source"] in nodes
         and nodes[edge["source"]].type == "topic"
     ]
+    headline = str(raw.annotations.get("summary", ""))
+    annotated_segments = raw.annotations.get("summary_segments")
+    summary_segments_explicit = isinstance(annotated_segments, list) and any(
+        isinstance(value, str) and value for value in annotated_segments
+    )
+    summary_segments = (
+        [str(value) for value in annotated_segments if isinstance(value, str) and value]
+        if summary_segments_explicit
+        else ([headline] if headline else [])
+    )
     return {
         "id": raw.id,
         "title": raw.title,
@@ -392,6 +402,9 @@ def _raw_model(raw: RawEntry, nodes: dict[str, Node], edges: list[dict[str, Any]
         "event_date": raw.event_date,
         "tags": list(raw.tags),
         "annotations": dict(raw.annotations),
+        "headline": headline,
+        "summary_segments": summary_segments,
+        "summary_segments_explicit": summary_segments_explicit,
         "belongs_to": belongs_to,
         "incoming": incoming,
         "body_html": render_markdown(raw.body),
@@ -668,7 +681,13 @@ def render_static_overview(model: dict[str, Any]) -> str:
     importance_words = {5: "高", 4: "高", 3: "中", 2: "低", 1: "低"}
     for raw in model["raws"].values():
         ann = raw.get("annotations", {}) or {}
-        summary = ann.get("summary") or "、".join(raw.get("tags", []))
+        headline = raw.get("headline") or ann.get("summary") or "、".join(raw.get("tags", []))
+        segments = raw.get("summary_segments", []) if raw.get("summary_segments_explicit") else []
+        segments_html = (
+            '<div class="detail-section-label">摘要正文</div><ol class="row-highlights">'
+            + "".join(f"<li>{escape(segment)}</li>" for segment in segments)
+            + "</ol>"
+        ) if segments else ""
         # 编译要点:把 occurrences / claims 转成可读列表(而非机器 JSON)
         points = []
         for occ in ann.get("occurrences", []) if isinstance(ann.get("occurrences"), list) else []:
@@ -696,7 +715,8 @@ def render_static_overview(model: dict[str, Any]) -> str:
         raw_rows.append(
             '<details class="relation-row">'
             f'<summary>原文 · <strong>{escape(raw["title"])}</strong></summary>'
-            f'<p class="row-summary">{escape(summary)}</p>'
+            f'<p class="row-summary">{escape(headline)}</p>'
+            f'{segments_html}'
             f'{points_html}'
             f'{belongs_html}'
             f'{origin_html}'
