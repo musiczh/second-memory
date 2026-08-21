@@ -180,7 +180,7 @@ class KnowledgeTransaction:
         self.finalize()
 
     def finalize(self) -> None:
-        if self.vectors_previous.exists():
+        if self.vectors_previous.exists() and not self._vectors_previous_marks_absence():
             from .vectors import vector_status
 
             if not vector_status(self.repo).ready:
@@ -257,6 +257,7 @@ class KnowledgeTransaction:
         vectors = self.repo / ".kb" / "vectors"
         has_next = self.vectors_next.exists()
         has_previous = self.vectors_previous.exists()
+        previous_marks_absence = has_previous and self._vectors_previous_marks_absence()
         has_failed = self.vectors_failed.exists()
         has_live = vectors.exists()
         self._vectors_included = marker_present or has_next or has_previous or has_failed or has_live
@@ -264,8 +265,10 @@ class KnowledgeTransaction:
             self._vectors_original_existed = False
             self._vectors_switched = False
             return
-        if has_previous or has_failed:
+        if (has_previous and not previous_marks_absence) or has_failed:
             self._vectors_original_existed = True
+        elif previous_marks_absence:
+            self._vectors_original_existed = False
         elif has_next:
             self._vectors_original_existed = has_live
         elif not marker_present:
@@ -282,6 +285,10 @@ class KnowledgeTransaction:
             if vectors.exists():
                 _replace_directory(vectors, self.vectors_previous)
             _replace_directory(self.vectors_next, vectors)
+            if not self._vectors_original_existed:
+                # Empty previous records that this transaction created the only live cache.
+                self.vectors_previous.mkdir()
+                _fsync_directory(self.root)
         except OSError as error:
             try:
                 self._restore_failed_vector_swap()
@@ -307,7 +314,7 @@ class KnowledgeTransaction:
 
     def _restore_failed_vector_swap(self) -> None:
         vectors = self.repo / ".kb" / "vectors"
-        if self.vectors_previous.exists():
+        if self._vectors_original_existed and self.vectors_previous.exists():
             if vectors.exists():
                 if self.vectors_failed.exists():
                     shutil.rmtree(self.vectors_failed)
@@ -315,8 +322,16 @@ class KnowledgeTransaction:
                 _replace_directory(vectors, self.vectors_failed)
             if not vectors.exists():
                 _replace_directory(self.vectors_previous, vectors)
-        elif not self._vectors_original_existed and vectors.exists() and not self.vectors_next.exists():
-            _replace_directory(vectors, self.vectors_next)
+        elif not self._vectors_original_existed:
+            if self.vectors_previous.exists():
+                self.vectors_previous.rmdir()
+                _fsync_directory(self.root)
+            if vectors.exists():
+                shutil.rmtree(vectors)
+                _fsync_directory(vectors.parent)
+
+    def _vectors_previous_marks_absence(self) -> bool:
+        return self.vectors_previous.is_dir() and next(self.vectors_previous.iterdir(), None) is None
 
     def _restore_previous_vectors(self) -> None:
         vectors = self.repo / ".kb" / "vectors"

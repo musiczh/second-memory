@@ -222,6 +222,56 @@ class KnowledgeVectorTransactionTest(VectorTestRepository):
 
         self.assertFalse((self.repo / ".kb/vectors").exists())
 
+    def test_corrupt_journal_and_missing_marker_remove_live_promoted_without_old_cache(self) -> None:
+        self.compile_without_vectors()
+        original_index = (self.repo / "index.md").read_text(encoding="utf-8")
+        tx = KnowledgeTransaction(self.repo, "session-vector-first-missing-marker")
+        tx.prepare(include_vectors=True)
+        self.stage_current_core(tx)
+        tx.stage_metadata(
+            index="promoted core\n",
+            manifest=load_manifest(self.repo),
+            pending_rows=read_pending(self.repo),
+        )
+        reindex_vectors(self.repo, FakeProvider(), destination=tx.vectors_next)
+        tx.promote()
+        self.assertTrue(tx.vectors_previous.is_dir())
+        self.assertEqual([], list(tx.vectors_previous.iterdir()))
+        tx.journal.write_text("{", encoding="utf-8")
+        tx.vectors_marker.unlink()
+
+        self.assertEqual("rolled_back_corrupt_journal", recover_transaction(self.repo))
+
+        self.assertEqual(original_index, (self.repo / "index.md").read_text(encoding="utf-8"))
+        self.assertFalse((self.repo / ".kb/vectors").exists())
+
+    def test_corrupt_journal_after_vector_discard_preserves_original_live_only_cache(self) -> None:
+        self.compile_without_vectors()
+        live = self.repo / ".kb/vectors"
+        reindex_vectors(self.repo, FakeProvider(axis=0))
+        original = self.cache_bytes(live)
+        original_index = (self.repo / "index.md").read_text(encoding="utf-8")
+        tx = KnowledgeTransaction(self.repo, "session-vector-discard-missing-marker")
+        tx.prepare(include_vectors=True)
+        self.stage_current_core(tx)
+        tx.stage_metadata(
+            index="promoted core only\n",
+            manifest=load_manifest(self.repo),
+            pending_rows=read_pending(self.repo),
+        )
+        tx.discard_vectors()
+        tx.promote()
+        self.assertTrue(live.is_dir())
+        self.assertFalse(tx.vectors_next.exists())
+        self.assertFalse(tx.vectors_previous.exists())
+        self.assertFalse(tx.vectors_marker.exists())
+        tx.journal.write_text("{", encoding="utf-8")
+
+        self.assertEqual("rolled_back_corrupt_journal", recover_transaction(self.repo))
+
+        self.assertEqual(original_index, (self.repo / "index.md").read_text(encoding="utf-8"))
+        self.assertEqual(original, self.cache_bytes(live))
+
     def test_vector_replaces_fsync_both_parent_directories_before_core_switch(self) -> None:
         self.compile_without_vectors()
         live = self.repo / ".kb/vectors"
