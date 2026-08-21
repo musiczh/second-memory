@@ -159,7 +159,10 @@ class UpdateVersionRoutingTest(RepositoryTestCase):
 
         self.assertEqual("noop", decision["mode"])
         self.assertTrue(decision["vector_reindex_required"])
-        self.assertEqual({"status": "stale", "reason": "Raw input changed"}, decision["vector"])
+        self.assertEqual({
+            "mode", "pending", "drift", "version_changed", "consolidation_pending", "rebuild",
+            "quality_repair", "weak_detail_node_ids", "weak_evidence_node_ids", "vector_reindex_required",
+        }, set(decision))
 
     def test_database_version_mismatch_routes_to_rebuild(self) -> None:
         manifest_path = self.repo / ".kb" / "manifest.json"

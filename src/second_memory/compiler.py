@@ -2235,7 +2235,6 @@ def determine_update_mode(repo: Path) -> dict[str, Any]:
     }
     vector = vector_status(repo)
     decision["vector_reindex_required"] = vector.status not in {"ready", "disabled"}
-    decision["vector"] = {"status": vector.status, "reason": vector.reason}
     return decision
 
 
