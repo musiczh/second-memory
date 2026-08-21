@@ -1324,9 +1324,20 @@ def apply_rebuild_response(repo: Path, response: dict[str, Any]) -> dict[str, An
     plan = CompilePlan.from_dict(value)
     workspace = rebuild_workspace(repo)
     if plan.mode == "rebuild":
+        run_id = plan.session_id.rsplit("-", 1)[-1]
+        valid_run_id = len(run_id) == 32 and all(
+            character in "0123456789abcdef" for character in run_id
+        )
+        source_manifest = load_manifest(repo)
+        source_state = rebuild_manifest_state(source_manifest)
+        if valid_run_id and source_state["phase"] == "complete" and source_state["run_id"] == run_id:
+            if (workspace / ".kb" / "manifest.json").exists():
+                workspace_manifest = load_manifest(workspace)
+                if _conflicts_with_committed_rebuild_run(source_manifest, workspace_manifest):
+                    raise ValidationError("workspace does not match committed rebuild identity")
+            raise StaleSessionError("stale rebuild run already completed")
         if not (workspace / ".kb" / "manifest.json").exists():
-            run_id = plan.session_id.rsplit("-", 1)[-1]
-            if len(run_id) != 32 or any(character not in "0123456789abcdef" for character in run_id):
+            if not valid_run_id:
                 raise StaleSessionError("stale rebuild session has no valid run ID")
             request = build_rebuild_request(repo, run_id=run_id)
             if request is None or plan.session_id != str(request["context"]["session_id"]):

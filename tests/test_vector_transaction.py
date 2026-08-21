@@ -1063,6 +1063,7 @@ class RawOnlyRebuildVectorTest(VectorTestRepository):
     def test_workspace_cleanup_failure_still_reindexes_once_and_returns_cleanup_error(self) -> None:
         self.seed_compiled_raw()
         first_request = build_rebuild_request(self.repo)
+        first_response = self.replay_plan(first_request)
         workspace = rebuild_workspace(self.repo)
         real_rmtree = shutil.rmtree
 
@@ -1075,7 +1076,7 @@ class RawOnlyRebuildVectorTest(VectorTestRepository):
             "second_memory.compiler.reindex_vectors",
             return_value=VectorCacheState("ready", "rebuilt once"),
         ) as reindex:
-            apply_rebuild_response(self.repo, self.replay_plan(first_request))
+            apply_rebuild_response(self.repo, first_response)
             tail_request = build_rebuild_request(self.repo)
             result = apply_rebuild_response(self.repo, self.consolidation_plan(tail_request))
 
@@ -1090,6 +1091,8 @@ class RawOnlyRebuildVectorTest(VectorTestRepository):
         self.assertFalse(rebuild_state(self.repo)["active"])
         self.assertEqual("complete", rebuild_state(self.repo)["phase"])
         self.assertEqual("noop", determine_update_mode(self.repo)["mode"])
+        with self.assertRaisesRegex(StaleSessionError, "already completed"):
+            apply_rebuild_response(self.repo, first_response)
 
         with patch("second_memory.compiler.shutil.rmtree", side_effect=OSError("cleanup still failed")), patch(
             "second_memory.compiler.reindex_vectors",
