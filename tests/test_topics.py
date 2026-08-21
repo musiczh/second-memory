@@ -501,6 +501,7 @@ class TopicContractTest(unittest.TestCase):
 class TopicVectorSupportRequestTest(RepositoryTestCase):
     topic_query = "用户如何通过稳定机制和行动反馈持续修正长期实践？"
     candidate_query = "哪些跨记录证据能够解释边界判断如何逐步形成？"
+    bounded_queries = [f"持久化组织问题 {index} 如何形成稳定且可验证的长期结构？" for index in range(5)]
 
     def setUp(self) -> None:
         super().setUp()
@@ -609,6 +610,52 @@ class TopicVectorSupportRequestTest(RepositoryTestCase):
             [{"raw_id": "raw-vector-1", "score": 0.83}],
         )
 
+    def _add_bounded_query_sources(self) -> None:
+        frontmatter.write_document(
+            self.repo / "wiki" / "topics" / "topic-shared.md",
+            {
+                "id": "topic-shared",
+                "type": "topic",
+                "title": "共享组织问题主题",
+                "summary": "共享组织问题主题摘要",
+                "sources": ["raw-vector-2"],
+                "attrs": {"topic_contract": {"organizing_question": self.topic_query}},
+            },
+            "共享组织问题主题正文",
+        )
+        manifest = load_manifest(self.repo)
+        manifest["candidates"].extend([
+            {
+                "candidate_id": "candidate-shared",
+                "kind": "topic",
+                "node_ids": ["statement-candidate"],
+                "title": "共享问题候选",
+                "topic_kind": "life_domain",
+                "status": "watching",
+                "reason": "与既有主题共享组织问题。",
+                "organizing_question": self.topic_query,
+                "confidence": 0.7,
+            },
+            *[
+                {
+                    "candidate_id": f"candidate-query-{index}",
+                    "kind": "topic",
+                    "node_ids": ["statement-candidate"],
+                    "title": f"有界问题候选 {index}",
+                    "topic_kind": "life_domain",
+                    "status": "watching",
+                    "reason": "持久化问题等待更多直接证据。",
+                    "organizing_question": query,
+                    "confidence": 0.5,
+                }
+                for index, query in enumerate(self.bounded_queries)
+            ],
+        ])
+        (self.repo / ".kb" / "manifest.json").write_text(
+            json.dumps(manifest, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
     def test_ready_catalog_uses_only_persisted_queries_and_bounded_units(self) -> None:
         with patch(
             "second_memory.compiler.vector_status",
@@ -629,13 +676,11 @@ class TopicVectorSupportRequestTest(RepositoryTestCase):
         self.assertEqual("ready", catalog["status"])
         self.assertEqual(2, len(catalog["entries"]))
         topic_entry, candidate_entry = catalog["entries"]
-        self.assertEqual("topic-existing", topic_entry["topic_id"])
-        self.assertNotIn("candidate_id", topic_entry)
-        self.assertEqual("candidate-watching", candidate_entry["candidate_id"])
-        self.assertNotIn("topic_id", candidate_entry)
+        self.assertEqual([{"kind": "topic", "id": "topic-existing"}], topic_entry["source_refs"])
+        self.assertEqual([{"kind": "candidate", "id": "candidate-watching"}], candidate_entry["source_refs"])
         self.assertLessEqual(len(topic_entry["snippet"]), 300)
         self.assertEqual(
-            {"query", "topic_id", "raw_id", "locator", "snippet", "score"},
+            {"query", "source_refs", "raw_id", "locator", "snippet", "score"},
             set(topic_entry),
         )
         self.assertEqual(
@@ -645,6 +690,103 @@ class TopicVectorSupportRequestTest(RepositoryTestCase):
         serialized = json.dumps(catalog, ensure_ascii=False)
         self.assertNotIn("完整 Raw 正文", serialized)
         self.assertNotIn('"vector":', serialized)
+
+    def test_catalog_deduplicates_queries_and_aggregates_stable_source_refs_before_query_cap(self) -> None:
+        self._add_bounded_query_sources()
+
+        def one_unit(_repo: Path, query: str) -> VectorSearchResult:
+            unit = VectorUnit(
+                chunk_id=f"chunk-{self.bounded_queries.index(query) if query in self.bounded_queries else 'shared'}",
+                raw_id="raw-vector-0",
+                kind="summary",
+                text=f"{query} 的候选证据",
+                segment_index=0,
+                score=0.8,
+            )
+            return VectorSearchResult(
+                "ready",
+                "vector cache is ready",
+                [unit],
+                [{"raw_id": unit.raw_id, "score": unit.score}],
+            )
+
+        with patch(
+            "second_memory.compiler.vector_status",
+            return_value=VectorCacheState("ready", "vector cache is ready"),
+        ), patch("second_memory.compiler.search_vectors", side_effect=one_unit) as search:
+            catalog = build_topic_request(self.repo)["context"]["vector_support_catalog"]
+
+        self.assertEqual(
+            [self.topic_query, *self.bounded_queries[:4]],
+            [call.args[1] for call in search.call_args_list],
+        )
+        shared = next(entry for entry in catalog["entries"] if entry["query"] == self.topic_query)
+        self.assertEqual(
+            [
+                {"kind": "candidate", "id": "candidate-shared"},
+                {"kind": "topic", "id": "topic-existing"},
+                {"kind": "topic", "id": "topic-shared"},
+            ],
+            shared["source_refs"],
+        )
+        self.assertEqual(5, len(catalog["entries"]))
+
+    def test_catalog_deduplicates_chunks_and_applies_global_score_order_and_entry_cap(self) -> None:
+        self._add_bounded_query_sources()
+        score_rows = {
+            self.topic_query: [("chunk-shared", 0.95), ("chunk-shared", 0.40), ("chunk-topic-2", 0.85)],
+            self.bounded_queries[0]: [("chunk-q0-0", 0.90), ("chunk-q0-1", 0.50), ("chunk-q0-2", 0.10)],
+            self.bounded_queries[1]: [("chunk-q1-0", 0.80), ("chunk-q1-1", 0.70), ("chunk-q1-2", 0.60)],
+            self.bounded_queries[2]: [("chunk-q2-0", 0.99), ("chunk-q2-1", 0.30), ("chunk-q2-2", 0.20)],
+            self.bounded_queries[3]: [("chunk-q3-0", 0.88), ("chunk-q3-1", 0.87), ("chunk-q3-2", 0.86)],
+        }
+
+        def scored_units(_repo: Path, query: str) -> VectorSearchResult:
+            units = [
+                VectorUnit(
+                    chunk_id=chunk_id,
+                    raw_id="raw-vector-0",
+                    kind="body",
+                    text=f"{chunk_id} score {score}",
+                    section_index=0,
+                    start=index,
+                    end=index + 1,
+                    score=score,
+                )
+                for index, (chunk_id, score) in enumerate(score_rows[query])
+            ]
+            return VectorSearchResult(
+                "ready",
+                "vector cache is ready",
+                units,
+                [{"raw_id": "raw-vector-0", "score": max(score for _, score in score_rows[query])}],
+            )
+
+        with patch(
+            "second_memory.compiler.vector_status",
+            return_value=VectorCacheState("ready", "vector cache is ready"),
+        ), patch("second_memory.compiler.search_vectors", side_effect=scored_units):
+            catalog = build_topic_request(self.repo)["context"]["vector_support_catalog"]
+
+        self.assertEqual(10, len(catalog["entries"]))
+        self.assertEqual(
+            [
+                "chunk-q2-0",
+                "chunk-shared",
+                "chunk-q0-0",
+                "chunk-q3-0",
+                "chunk-q3-1",
+                "chunk-q3-2",
+                "chunk-topic-2",
+                "chunk-q1-0",
+                "chunk-q1-1",
+                "chunk-q1-2",
+            ],
+            [entry["locator"]["chunk_id"] for entry in catalog["entries"]],
+        )
+        self.assertEqual(1, sum(entry["locator"]["chunk_id"] == "chunk-shared" for entry in catalog["entries"]))
+        shared = next(entry for entry in catalog["entries"] if entry["locator"]["chunk_id"] == "chunk-shared")
+        self.assertEqual(0.95, shared["score"])
 
     def test_non_ready_cache_is_explicit_and_does_not_block_requests(self) -> None:
         with patch(
@@ -702,6 +844,22 @@ class TopicVectorSupportRequestTest(RepositoryTestCase):
         self.assertIn("new organizing question", protocol)
         self.assertIn("candidate evidence", protocol)
         self.assertIn("TopicContract", protocol)
+
+    def test_skill_raw_annotation_requiredness_matches_compile_schema(self) -> None:
+        protocol = (Path(__file__).parents[1] / "SKILL.md").read_text(encoding="utf-8")
+
+        self.assertIn("`body_groups` key is required and may be `[]`", protocol)
+        self.assertIn("`emotion` is optional and may be omitted", protocol)
+        for field in [
+            "`summary`",
+            "`summary_segments`",
+            "`importance`",
+            "`mentions`",
+            "`occurrences`",
+            "`claims`",
+            "`body_groups`",
+        ]:
+            self.assertIn(field, protocol)
 
 
 if __name__ == "__main__":

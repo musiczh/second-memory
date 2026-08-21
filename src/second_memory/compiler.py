@@ -713,28 +713,35 @@ def build_vector_support_catalog(
     if not state.ready:
         return catalog
 
-    queries: list[tuple[str, str, str]] = []
+    query_sources: dict[str, dict[tuple[str, str], dict[str, str]]] = {}
     for node in sorted(nodes.values(), key=lambda item: item.id):
         if node.type != "topic":
             continue
         contract = node.attrs.get("topic_contract")
         query = str(contract.get("organizing_question", "")).strip() if isinstance(contract, dict) else ""
         if query:
-            queries.append(("topic_id", node.id, query))
+            query_sources.setdefault(query, {})[("topic", node.id)] = {"kind": "topic", "id": node.id}
     for candidate in sorted(candidates_payload(manifest.get("candidates", [])), key=lambda item: item["candidate_id"]):
         if candidate.get("kind") != "topic" or candidate.get("status") not in {"pending", "watching"}:
             continue
         query = str(candidate.get("organizing_question", "")).strip()
         if query:
-            queries.append(("candidate_id", str(candidate["candidate_id"]), query))
+            candidate_id = str(candidate["candidate_id"])
+            query_sources.setdefault(query, {})[("candidate", candidate_id)] = {
+                "kind": "candidate",
+                "id": candidate_id,
+            }
 
-    if not queries:
+    if not query_sources:
         catalog["reason"] = "no persisted organizing query is available"
         return catalog
 
-    unit_limit = int(load_config(repo)["vector_unit_limit"])
-    entries: list[dict[str, Any]] = []
-    for source_key, source_id, query in queries:
+    config = load_config(repo)
+    query_limit = int(config["vector_raw_limit"])
+    entry_limit = int(config["vector_unit_limit"])
+    selected_queries = list(query_sources)[:query_limit]
+    entries_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    for query in selected_queries:
         result = search_vectors(repo, query)
         if result.status != "ready":
             return {
@@ -742,10 +749,11 @@ def build_vector_support_catalog(
                 "reason": result.reason,
                 "entries": [],
             }
-        for unit in result.units[:unit_limit]:
-            entries.append({
+        source_refs = [query_sources[query][key] for key in sorted(query_sources[query])]
+        for unit in result.units[:entry_limit]:
+            entry = {
                 "query": query,
-                source_key: source_id,
+                "source_refs": source_refs,
                 "raw_id": unit.raw_id,
                 "locator": {
                     "chunk_id": unit.chunk_id,
@@ -757,8 +765,28 @@ def build_vector_support_catalog(
                 },
                 "snippet": unit.text[:VECTOR_SUPPORT_SNIPPET_LIMIT],
                 "score": float(unit.score or 0.0),
-            })
-    catalog["entries"] = entries
+            }
+            key = (query, unit.chunk_id)
+            existing = entries_by_key.get(key)
+            if (
+                existing is None
+                or float(entry["score"]) > float(existing["score"])
+                or (
+                    float(entry["score"]) == float(existing["score"])
+                    and json.dumps(entry, ensure_ascii=False, sort_keys=True)
+                    < json.dumps(existing, ensure_ascii=False, sort_keys=True)
+                )
+            ):
+                entries_by_key[key] = entry
+    catalog["entries"] = sorted(
+        entries_by_key.values(),
+        key=lambda entry: (
+            -float(entry["score"]),
+            str(entry["query"]),
+            str(entry["locator"]["chunk_id"]),
+            str(entry["raw_id"]),
+        ),
+    )[:entry_limit]
     return catalog
 
 

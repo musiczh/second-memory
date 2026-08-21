@@ -30,22 +30,30 @@ cache（.kb/vectors，JSONL 只保存 locator + vector，不复制正文）
 supplemental retrieval（有界 top units，回切短 snippet，只作候选证据）
 ```
 
-事务边界与降级边界彼此独立：
+增量 Apply 使用 transaction-coordinated、journal-recoverable 的多目录切换，而不是把多个目录误述为单个文件系统原子操作：
 
 ```text
-核心事务：Raw annotation + compiled nodes + edges + manifest + Wiki
+incremental staging：vectors.next + Wiki + Raw annotation + manifest
                             │
-                            ├─ vector next ready ─▶ 与核心投影一起原子切换
+                            ├─ vectors.next ready
+                            │      └─▶ journal=promoting
+                            │             └─▶ 依次切换 vector/core 多个目录并持久化 journal
+                            │                    └─▶ Git commit → journal=committed → finalize
                             │
-                            └─ pending/stale/missing/corrupt/disabled
-                                             └─▶ 核心事务继续提交，向量目录不覆盖
+                            └─ vector pending/stale/missing/corrupt/disabled
+                                   └─▶ discard vectors.next → core-only commit
+
+进程中断：journal + marker + 实际目录拓扑
+                            └─▶ 确定性 rollback 或 finalize
 ```
+
+Raw-only rebuild 的边界不同：workspace 核心投影先完成 promotion 和 Git commit；提交成功后才执行一次 `offline=True` 的全量 reindex。该 reindex 是 best-effort，失败只返回向量降级状态，不回滚已经提交的 rebuild 核心结果。
 
 - 核心知识仍以不可变 Raw 和可审计编译投影为准；`.kb/vectors/` 是 Git 忽略、可删除重建的辅助缓存。
 - 普通 Apply、search、status 只允许使用本地模型；只有显式 `vectors reindex` 可以进入模型下载边界。缓存非 ready 时，检索输出和 Topic／Consolidation 请求返回明确 `status/reason` 与空向量结果，不能阻断核心工作流。
 - `search_level1` 的关键词／图谱候选、分数和顺序保持不变，向量结果只追加到 `supplemental_raw`。Level 2 只携带 top unit locator、短 snippet 和有界 Raw 元数据，不发送整篇 Raw。
-- Topic／Consolidation 的 `vector_support_catalog` 只对已有 topic contract 或稳定 topic candidate 中显式保存的 `organizing_question` 做有界检索。不存在持久化问题时返回空目录；Host Agent 提出全新组织问题时，先显式执行 `second-memory vectors search`。
-- 向量命中只提供 `query`、来源 topic／candidate ID、`raw_id`、locator、短 snippet、score 与 cache status。它不进入 `member_catalog/raw_catalog`，不自动产生成员、action、edge 或 `belongs_to`；成员仍须逐项通过 V2.4 TopicContract。
+- Topic／Consolidation 的 `vector_support_catalog` 只对已有 topic contract 或稳定 topic candidate 中显式保存的 `organizing_question` 做有界检索。相同问题只搜索一次并聚合稳定 `source_refs`；唯一 query 最多 `vector_raw_limit` 条，catalog entry 全局最多 `vector_unit_limit` 条。不存在持久化问题时返回空目录；Host Agent 提出全新组织问题时，先显式执行 `second-memory vectors search`。
+- 向量命中只提供 `query`、来源 `source_refs`、`raw_id`、locator、短 snippet、score 与 cache status。相同 `(query, chunk_id)` 去重后按 score 和稳定 tie-break 全局排序。它不进入 `member_catalog/raw_catalog`，不自动产生成员、action、edge 或 `belongs_to`；成员仍须逐项通过 V2.4 TopicContract。
 - Wiki Raw 详情把 `summary` 作为 headline，并按原顺序展示 `summary_segments`；旧 Raw 缺少 segments 时只回退显示一次 headline，避免重复。
 
 ## 0. V2.4 实体覆盖、主题提炼与理解层契约（优先级最高）

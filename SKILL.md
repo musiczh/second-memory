@@ -61,7 +61,7 @@ second-memory compile --emit-request --json
 
 Read `data.llm_request`. Return one V2.5 contract `CompilePlan v2` matching its schema:
 
-- Annotate each consumed raw with a 60–100 character headline `summary`, one or more ordered 50–300 character `summary_segments`（short Raw exception applies）, `body_groups` covering every requested `body_atom`, importance, optional emotion, and three explicit arrays: `mentions` for durable referents, `occurrences` for possible user-centered events, and `claims` for possible insight threads. Empty annotation channels are valid only when no action of the corresponding entity/event/statement type cites that raw; omitting a response field is never valid.
+- Every Raw annotation response must include `summary`, `summary_segments`, `importance`, `mentions`, `occurrences`, `claims`, and `body_groups`. Use a 60–100 character headline `summary` and one or more ordered 50–300 character `summary_segments`（short Raw exception applies）. The `body_groups` key is required and may be `[]`; an empty array asks the CLI to apply its deterministic grouping fallback, while a non-empty array must cover every requested `body_atom`. The `emotion` is optional and may be omitted. Empty annotation channels are valid only when no action of the corresponding entity/event/statement type cites that Raw.
 - Returning zero node actions and zero `belongs_to` edges is valid when all three channels are empty. Prefer that outcome over promoting a routine chat, routine reading trigger, momentary state, or generic observation into a durable node.
 - Reuse an existing node with `target_id` when the resolver context identifies it.
 - Use a plan-local `ref` for a new node. The CLI owns final IDs and paths.
