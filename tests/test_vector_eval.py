@@ -212,6 +212,24 @@ class RankingMetricsTest(unittest.TestCase):
 
 
 class EvaluationReportTest(unittest.TestCase):
+    def test_ranking_evidence_is_capped_but_metrics_use_the_full_ranking(self) -> None:
+        ranking = [f"raw-20260820-1200-{index:08x}" for index in range(60)]
+        relevant = ranking[-1]
+
+        report = evaluate_gold(
+            [load_gold_row("长排名证据", [relevant])],
+            lambda _: level1_result(keyword_sources=[[raw_id] for raw_id in ranking], units=[]),
+        )
+
+        query = report["queries"][0]
+        self.assertEqual(50, len(query["rankings"]["keyword"]))
+        self.assertEqual(50, len(query["rankings"]["union"]))
+        self.assertNotIn(relevant, query["rankings"]["keyword"])
+        self.assertEqual({"keyword": 60, "vector": 0, "union": 60}, query["ranking_counts"])
+        self.assertEqual({"keyword": True, "vector": False, "union": True}, query["ranking_truncated"])
+        self.assertEqual(0.016667, query["metrics"]["keyword"]["mrr"])
+        self.assertEqual(query["metrics"]["keyword"], query["metrics"]["union"])
+
     def test_sixth_unique_vector_raw_reaches_mrr_and_union_evaluation(self) -> None:
         relevant = "raw-20260820-1206-00000006"
         vector_units = [

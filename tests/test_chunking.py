@@ -134,3 +134,41 @@ class CompileSectionProtocolTest(RepositoryTestCase):
         self.assertEqual(plan["raw_annotations"][0]["summary_segments"], meta["summary_segments"])
         self.assertEqual(entry["body"], "".join(entry["body"][section["start"]:section["end"]] for section in meta["body_sections"]))
         self.assertTrue(all(set(section) == {"start", "end", "source"} for section in meta["body_sections"]))
+
+    def test_apply_persists_stripped_canonical_annotation_text(self) -> None:
+        body = "正文包含足够长度，用于验证摘要字段在校验和持久化阶段使用同一份规范化文本。" * 3
+        raw_id = self.add("摘要规范化", body, "2026-08-20")
+        raw_path = next((self.repo / "raw").rglob("*.md"))
+        _, before_body = frontmatter.read_document(raw_path)
+        request = build_compile_request(self.repo, mode="incremental")
+        headline = "甲" * 100
+        segment = "乙" * 300
+        plan = {
+            "schema_version": 2,
+            "session_id": request["context"]["session_id"],
+            "mode": "incremental",
+            "raw_annotations": [{
+                "raw_id": raw_id,
+                "summary": f" \n{headline}\t ",
+                "summary_segments": [f" \n{segment}\t "],
+                "body_groups": [],
+                "importance": 1,
+                "emotion": "",
+                "mentions": [],
+                "occurrences": [],
+                "claims": [],
+            }],
+            "node_actions": [],
+            "out_edges": [],
+            "candidates": [],
+            "consolidation_memo": request["context"]["consolidation_memo"],
+        }
+
+        apply_response(self.repo, plan, command="compile")
+
+        meta, after_body = frontmatter.read_document(raw_path)
+        self.assertEqual(headline, meta["summary"])
+        self.assertEqual([segment], meta["summary_segments"])
+        self.assertEqual(100, len(meta["summary"]))
+        self.assertEqual(300, len(meta["summary_segments"][0]))
+        self.assertEqual(before_body, after_body)

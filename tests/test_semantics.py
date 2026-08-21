@@ -591,6 +591,18 @@ class CompilePlanSemanticsTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValidationError, message):
                     validate_compile_plan(plan, [long_raw], {RAW_ID: long_raw})
 
+    def test_raw_annotation_whitespace_cannot_bypass_text_bounds(self) -> None:
+        plan = compile_plan(create_action())
+        plan.raw_annotations[0]["summary"] = " \n" + "甲" * 101 + "\t "
+        with self.assertRaisesRegex(ValidationError, "60 to 100"):
+            validate_compile_plan(plan, [self.raw], {RAW_ID: self.raw})
+
+        long_raw = replace(self.raw, body="正文" * 30)
+        plan = compile_plan(create_action())
+        plan.raw_annotations[0]["summary_segments"] = [" \n" + "乙" * 301 + "\t "]
+        with self.assertRaisesRegex(ValidationError, "1 to 300"):
+            validate_compile_plan(plan, [long_raw], {RAW_ID: long_raw})
+
     def test_raw_annotation_allows_short_summary_segment_for_short_body(self) -> None:
         plan = compile_plan(create_action())
         plan.raw_annotations[0]["summary_segments"] = ["短摘要"]

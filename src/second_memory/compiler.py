@@ -9,7 +9,7 @@ from typing import Any
 
 from . import frontmatter
 from .chunking import annotation_hash, atomize_body, default_body_groups, sections_from_groups, validate_body_groups
-from .config import KB_VERSION, default_config, load_config, skill_repo_root, write_config
+from .config import KB_VERSION, VECTOR_CONFIG_KEYS, default_config, load_config, skill_repo_root, write_config
 from .errors import StaleSessionError, ValidationError
 from .graph import (
     apply_node_actions,
@@ -509,7 +509,14 @@ def build_rebuild_request(repo: Path) -> dict[str, Any] | None:
     workspace = rebuild_workspace(repo)
     workspace_exists = (workspace / ".kb" / "manifest.json").exists()
     if workspace_exists:
-        validate_rebuild_source(repo, workspace)
+        if rebuild_manifest_state(load_manifest(workspace))["phase"] == "complete":
+            try:
+                shutil.rmtree(workspace)
+            except OSError as error:
+                raise ValidationError(f"residual rebuild workspace cleanup failed: {error}") from error
+            workspace_exists = False
+        else:
+            validate_rebuild_source(repo, workspace)
     target = workspace if workspace_exists else repo
     state = rebuild_manifest_state(load_manifest(target))
     if workspace_exists and len(consolidation_state(load_manifest(target))["pending_raw"]) >= CONSOLIDATION_BATCH_SIZE:
@@ -1243,6 +1250,8 @@ def finalize_rebuild(repo: Path) -> dict[str, Any]:
         workspace_manifest = load_manifest(workspace)
         state = rebuild_manifest_state(workspace_manifest)
         consolidation = consolidation_state(workspace_manifest)
+        if state["phase"] == "complete":
+            raise ValidationError("rebuild workspace is already complete")
         if state["phase"] != "consolidate" or state["cursor"] != state["total"]:
             raise ValidationError("rebuild replay is not complete")
         if consolidation["pending_raw"]:
@@ -1268,6 +1277,7 @@ def finalize_rebuild(repo: Path) -> dict[str, Any]:
             str(source_config.get("agent") or "") or None,
             source_backend,
         )
+        final_config.update({key: source_config[key] for key in VECTOR_CONFIG_KEYS})
         final_manifest = {
             **workspace_manifest,
             "rebuild": {**state, "phase": "complete"},
@@ -1306,7 +1316,7 @@ def finalize_rebuild(repo: Path) -> dict[str, Any]:
                 *sorted(raw_documents),
             ]
             message = (
-                "chore(rebuild): 从 raw 顺序重建 v2.4 图谱\n\n"
+                f"chore(rebuild): 从 raw 顺序重建 v{KB_VERSION.rsplit('.', 1)[0]} 图谱\n\n"
                 f"raw-count: {state['total']}\n"
                 f"consolidation-pending: {len(consolidation['pending_raw'])}\n"
                 f"kb-version: {KB_VERSION}\n"
@@ -1321,6 +1331,7 @@ def finalize_rebuild(repo: Path) -> dict[str, Any]:
                 if isinstance(store, GitStorage):
                     store.unstage_paths(paths if "paths" in locals() else [])
             raise
+        manifest_path.write_text(json_dumps(final_manifest) + "\n", encoding="utf-8")
         cleanup_error: Exception | None = None
         try:
             shutil.rmtree(workspace)
@@ -1936,8 +1947,8 @@ def build_raw_annotations(repo: Path, plan: CompilePlan, entries: list[RawEntry]
         meta, body = frontmatter.read_document(entry.path)
         before = sha256_text(body)
         if annotation:
-            meta["summary"] = str(annotation["summary"])
-            meta["summary_segments"] = list(annotation["summary_segments"])
+            meta["summary"] = str(annotation["summary"]).strip()
+            meta["summary_segments"] = [str(value).strip() for value in annotation["summary_segments"]]
             atoms = atomize_body(body)
             groups = annotation["body_groups"]
             selected_groups = validate_body_groups(atoms, groups) if groups else default_body_groups(atoms)
@@ -2339,7 +2350,7 @@ def determine_update_mode(repo: Path) -> dict[str, Any]:
 
 def commit_message(command: str, mode: str, raw_ids: list[str], pages: list[str]) -> str:
     if mode == "rebuild":
-        subject = "chore(rebuild): 重建 v2.4 编译图谱"
+        subject = f"chore(rebuild): 重建 v{KB_VERSION.rsplit('.', 1)[0]} 编译图谱"
     elif mode == "topics":
         subject = "feat(memory): 重建高维主题组织"
     elif mode == "consolidate":

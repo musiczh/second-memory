@@ -14,6 +14,7 @@ from .vectors import VectorUnit, vector_status
 
 
 _RAW_ID = re.compile(r"raw-\d{8}-\d{4}-[0-9a-f]{8}")
+EVIDENCE_RANKING_LIMIT = 50
 
 
 class GoldValidationError(ValidationError):
@@ -174,6 +175,7 @@ def evaluate_gold(
         raise ValueError("unknown vector unit type: " + ", ".join(sorted(unknown)))
 
     query_reports: list[dict[str, Any]] = []
+    raw_metric_reports: list[dict[str, dict[str, float]]] = []
     for gold_query in gold:
         result = search(gold_query.query)
         supplemental = result.get("supplemental_raw", {})
@@ -189,15 +191,28 @@ def evaluate_gold(
             "vector": vector_ranking,
             "union": union_rankings(keyword_ranking, vector_ranking),
         }
+        raw_metrics = {
+            name: _raw_metrics(gold_query.relevant_raw_ids, ranking)
+            for name, ranking in rankings.items()
+        }
+        raw_metric_reports.append(raw_metrics)
         returned_chunks = {str(_unit_value(unit, "chunk_id")) for unit in vector_units}
         expected = list(gold_query.expected_units)
         query_reports.append({
             "query": gold_query.query,
             "relevant_raw_ids": list(gold_query.relevant_raw_ids),
-            "rankings": rankings,
-            "metrics": {
-                name: metrics_for_ranking(gold_query.relevant_raw_ids, ranking)
+            "rankings": {
+                name: ranking[:EVIDENCE_RANKING_LIMIT]
                 for name, ranking in rankings.items()
+            },
+            "ranking_counts": {name: len(ranking) for name, ranking in rankings.items()},
+            "ranking_truncated": {
+                name: len(ranking) > EVIDENCE_RANKING_LIMIT
+                for name, ranking in rankings.items()
+            },
+            "metrics": {
+                name: {metric: _stable(value) for metric, value in metrics.items()}
+                for name, metrics in raw_metrics.items()
             },
             "vector_units": [_unit_evidence(unit) for unit in vector_units],
             "expected_unit_evidence": {
@@ -214,9 +229,9 @@ def evaluate_gold(
         "summary": {
             method: {
                 metric: _stable(math.fsum(
-                    _raw_metrics(row["relevant_raw_ids"], row["rankings"][method])[metric]
-                    for row in query_reports
-                ) / len(query_reports))
+                    row[method][metric]
+                    for row in raw_metric_reports
+                ) / len(raw_metric_reports))
                 for metric in ("recall_at_5", "mrr", "ndcg_at_5", "noise_rate", "zero_result_rate")
             }
             for method in ("keyword", "vector", "union")

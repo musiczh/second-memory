@@ -19,6 +19,21 @@ from .utils import sha256_text
 
 VECTOR_CACHE_SCHEMA = 1
 _CACHE_DIR = Path(".kb/vectors")
+_MANIFEST_KEYS = {
+    "schema", "provider", "model", "model_hash", "dimension", "spec",
+    "spec_fingerprint", "config_fingerprint", "input_fingerprint",
+    "raw_count", "unit_count", "raws",
+}
+_SPEC_KEYS = {"provider", "model", "dimension", "dtype", "normalization", "runtime", "model_hash"}
+_RAW_INFO_KEYS = {
+    "path", "body_hash", "annotation_hash", "raw_fingerprint", "file", "file_hash", "unit_count",
+}
+_COMMON_ROW_KEYS = {"chunk_id", "raw_id", "kind", "vector", "body_hash", "annotation_hash"}
+_ROW_KEYS = {
+    "headline": _COMMON_ROW_KEYS,
+    "summary": _COMMON_ROW_KEYS | {"segment_index"},
+    "body": _COMMON_ROW_KEYS | {"section_index", "start", "end"},
+}
 
 
 class VectorCacheError(RuntimeError):
@@ -261,6 +276,9 @@ def search_vectors(
     qualified = [unit for unit in scanned if float(unit.score or 0.0) >= float(config["vector_min_score"])]
     units = qualified[: int(config["vector_unit_limit"])]
     raws: list[dict[str, Any]] = []
+    raw_limit = int(config["vector_raw_limit"])
+    if raw_limit <= 0:
+        return VectorSearchResult("ready", "vector cache is ready", units, raws)
     seen: set[str] = set()
     entries = _raw_lookup(repo)
     for unit in units:
@@ -275,7 +293,7 @@ def search_vectors(
             "score": unit.score,
             "chunk_id": unit.chunk_id,
         })
-        if len(raws) == int(config["vector_raw_limit"]):
+        if len(raws) == raw_limit:
             break
     return VectorSearchResult("ready", "vector cache is ready", units, raws)
 
@@ -448,6 +466,8 @@ def _inspect_cache(repo: Path, cache_root: Path, *, ignore_pending: bool = False
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         if not isinstance(manifest, dict) or int(manifest.get("schema", 0)) != VECTOR_CACHE_SCHEMA:
             raise VectorCacheError("vector cache schema is invalid")
+        if set(manifest) != _MANIFEST_KEYS:
+            raise VectorCacheError("vector cache manifest fields are invalid")
         spec = _spec_from_manifest(manifest)
         if _spec_fingerprint(spec) != manifest.get("spec_fingerprint"):
             raise VectorCacheError("embedding spec fingerprint is invalid")
@@ -471,7 +491,9 @@ def _inspect_cache(repo: Path, cache_root: Path, *, ignore_pending: bool = False
         unit_count = 0
         for raw_id in compiled_ids:
             info = raw_manifests[raw_id]
-            if not isinstance(info, dict) or any(info.get(key) != inputs[raw_id][key] for key in inputs[raw_id]):
+            if not isinstance(info, dict) or set(info) != _RAW_INFO_KEYS:
+                raise VectorCacheError(f"vector Raw manifest fields are invalid: {raw_id}")
+            if any(info.get(key) != inputs[raw_id][key] for key in inputs[raw_id]):
                 return VectorCacheState("stale", f"Raw fingerprint differs from the cache: {raw_id}", manifest)
             relative = Path(str(info.get("file", "")))
             if relative.parts != ("raw", f"{raw_id}.jsonl"):
@@ -517,11 +539,13 @@ def _current_inputs(
             list(entry.annotations.get("body_sections", [])),
         )
         main = main_raws.get(raw_id, {})
+        path = str(entry.path.relative_to(repo))
         if require_main_manifest and (
-            main.get("body_hash") != body_hash or main.get("annotation_hash") != current_annotation_hash
+            main.get("path") != path
+            or main.get("body_hash") != body_hash
+            or main.get("annotation_hash") != current_annotation_hash
         ):
             raise VectorCacheStaleError(f"main manifest Raw fingerprint is stale: {raw_id}")
-        path = str(entry.path.relative_to(repo))
         raw_fingerprint = _fingerprint({
             "path": path,
             "body_hash": body_hash,
@@ -590,9 +614,12 @@ def _read_rows(path: Path, raw_id: str, info: dict[str, Any], dimension: int) ->
             row = json.loads(line)
         except json.JSONDecodeError as error:
             raise VectorCacheError(f"vector JSONL contains invalid JSON: {raw_id}") from error
-        if not isinstance(row, dict) or "text" in row:
+        if not isinstance(row, dict):
             raise VectorCacheError(f"vector JSONL row is invalid: {raw_id}")
-        if row.get("raw_id") != raw_id or row.get("kind") not in {"headline", "summary", "body"}:
+        kind = row.get("kind")
+        if kind not in _ROW_KEYS or set(row) != _ROW_KEYS[kind]:
+            raise VectorCacheError(f"vector JSONL row fields are invalid: {raw_id}")
+        if row.get("raw_id") != raw_id:
             raise VectorCacheError(f"vector JSONL locator is invalid: {raw_id}")
         chunk_id = row.get("chunk_id")
         if not isinstance(chunk_id, str) or not chunk_id or chunk_id in seen:
@@ -685,13 +712,19 @@ def _validate_spec_against_config(spec: EmbeddingSpec, config: dict[str, Any]) -
         raise VectorCacheError("embedding model differs from vector configuration")
     if spec.dimension != int(config["vector_dimension"]):
         raise VectorCacheError("embedding dimension differs from vector configuration")
-    if not spec.model_hash:
-        raise VectorCacheError("embedding model hash is missing")
+    if spec.dtype != "float32":
+        raise VectorCacheError("embedding dtype must be float32")
+    if spec.normalization != "l2":
+        raise VectorCacheError("embedding normalization must be l2")
+    if spec.runtime != "onnxruntime-cpu":
+        raise VectorCacheError("embedding runtime must be onnxruntime-cpu")
+    if len(spec.model_hash) != 64 or any(character not in "0123456789abcdef" for character in spec.model_hash):
+        raise VectorCacheError("embedding model hash must be a lowercase SHA-256 digest")
 
 
 def _spec_from_manifest(manifest: dict[str, Any]) -> EmbeddingSpec:
     value = manifest.get("spec")
-    if not isinstance(value, dict):
+    if not isinstance(value, dict) or set(value) != _SPEC_KEYS:
         raise VectorCacheError("embedding spec is missing")
     try:
         return EmbeddingSpec(

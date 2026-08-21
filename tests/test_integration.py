@@ -22,6 +22,7 @@ from second_memory.compiler import (
     build_rebuild_request,
     build_topic_request,
     consolidation_state,
+    commit_message,
     create_session_id,
     determine_update_mode,
     finalize_rebuild,
@@ -73,6 +74,12 @@ class RepositoryTestCase(BaseRepositoryTestCase):
 
 
 class CompileIntegrationTest(RepositoryTestCase):
+    def test_rebuild_commit_subject_uses_v25_contract_version(self) -> None:
+        message = commit_message("rebuild", "rebuild", ["raw-1"], ["statement-1"])
+
+        self.assertTrue(message.startswith("chore(rebuild): 重建 v2.5 编译图谱\n"))
+        self.assertNotIn("v2.4", message)
+
     def test_zero_node_raw_compiles_without_polluting_graph_and_counts_for_consolidation(self) -> None:
         raw_id = self.add("普通聊天", "我今天和对象随口聊了几句，没有形成决定、承诺或结果。", "2026-08-05")
         request = build_compile_request(self.repo, mode="incremental")
@@ -418,6 +425,30 @@ class CompileIntegrationTest(RepositoryTestCase):
         supplemental = vector_supplement(self.repo, result)
 
         self.assertEqual(["raw-1"], [raw["raw_id"] for raw in supplemental["raws"]])
+
+    def test_vector_metadata_race_degrades_without_losing_keyword_results(self) -> None:
+        raw_id = self.add("向量元数据竞态", "关键词结果必须在向量原料读取失败时继续返回。", "2026-08-03")
+        self.apply_pending(states={raw_id: "向量元数据读取失败不影响关键词检索"})
+        baseline = search_level1(self.repo, "向量元数据")
+        vector = VectorSearchResult(
+            "ready",
+            "ready",
+            [VectorUnit(chunk_id="unit-race", raw_id=raw_id, kind="body", text="向量原料", start=0, end=4, score=0.9)],
+            [{"raw_id": raw_id, "score": 0.9}],
+        )
+
+        with patch("second_memory.retriever.search_vectors", return_value=vector), patch(
+            "second_memory.retriever.read_raw_by_path",
+            side_effect=OSError("Raw metadata disappeared"),
+        ):
+            result = search_level1(self.repo, "向量元数据")
+
+        self.assertEqual(baseline["candidates"], result["candidates"])
+        self.assertEqual(baseline["hits"], result["hits"])
+        self.assertEqual("corrupt", result["supplemental_raw"]["status"])
+        self.assertIn("Raw metadata disappeared", result["supplemental_raw"]["reason"])
+        self.assertEqual([], result["supplemental_raw"]["units"])
+        self.assertEqual([], result["supplemental_raw"]["raws"])
 
     def test_rg_hits_parses_single_index_file_with_colons_in_text(self) -> None:
         completed = type("Completed", (), {

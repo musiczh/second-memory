@@ -362,11 +362,40 @@ def transaction_state(repo: Path) -> dict[str, Any]:
         payload = json.loads(journal.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {"state": "corrupt", "session_id": None, "recovery_required": True}
+    if not _valid_journal(payload):
+        return {"state": "corrupt", "session_id": None, "recovery_required": True}
     return {
-        "state": str(payload.get("phase", "unknown")),
-        "session_id": payload.get("session_id"),
-        "recovery_required": payload.get("phase") != "committed",
+        "state": payload["phase"],
+        "session_id": payload["session_id"],
+        "recovery_required": payload["phase"] != "committed",
     }
+
+
+def _valid_journal(payload: object) -> bool:
+    if not isinstance(payload, dict) or set(payload) != {
+        "schema", "session_id", "phase", "commit", "originals", "vectors",
+    }:
+        return False
+    if payload["schema"] != 2:
+        return False
+    if not isinstance(payload["session_id"], str) or not payload["session_id"].strip():
+        return False
+    if payload["phase"] not in {"prepared", "promoting", "promoted", "committed"}:
+        return False
+    if payload["commit"] is not None and not isinstance(payload["commit"], str):
+        return False
+    originals = payload["originals"]
+    if not isinstance(originals, dict) or any(
+        not isinstance(path, str) or not isinstance(existed, bool)
+        for path, existed in originals.items()
+    ):
+        return False
+    vectors = payload["vectors"]
+    return (
+        isinstance(vectors, dict)
+        and set(vectors) == {"included", "original_existed", "switched"}
+        and all(isinstance(value, bool) for value in vectors.values())
+    )
 
 
 def recover_transaction(repo: Path) -> str:
@@ -376,7 +405,12 @@ def recover_transaction(repo: Path) -> str:
     journal = repo / ".kb" / "transaction.json"
     if state["state"] == "corrupt":
         return recover_corrupt_transaction(repo)
-    payload = json.loads(journal.read_text(encoding="utf-8"))
+    try:
+        payload = json.loads(journal.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return recover_corrupt_transaction(repo)
+    if not _valid_journal(payload):
+        return recover_corrupt_transaction(repo)
     tx = KnowledgeTransaction(repo, str(payload.get("session_id", "unknown")))
     tx._originals = dict(payload.get("originals", {}))
     if not tx._load_vectors_state(payload.get("vectors", {})):

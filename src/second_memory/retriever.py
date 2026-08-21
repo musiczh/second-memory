@@ -22,29 +22,40 @@ def vector_supplement(repo: Path, result: VectorSearchResult) -> dict[str, Any]:
     if result.status != "ready":
         return payload
 
-    manifest_raw = load_manifest(repo).get("raw_hashes", {})
-    raw_entries: dict[str, Any] = {}
-    raw_summaries: dict[str, dict[str, Any]] = {}
-    selected_raw_ids = {str(raw.get("raw_id", "")) for raw in result.raws}
-    for unit in result.units:
-        serialized = _vector_unit_payload(unit)
-        payload["units"].append(serialized)
-        if unit.raw_id not in selected_raw_ids:
-            continue
-        raw = raw_summaries.get(unit.raw_id)
-        if raw is None:
-            entry = _vector_raw_entry(repo, manifest_raw, raw_entries, unit.raw_id)
-            raw = {
-                "raw_id": unit.raw_id,
-                "title": entry.title if entry is not None else "",
-                "event_date": entry.event_date if entry is not None else None,
-                "best_score": float(unit.score or 0.0),
-                "matched_units": [],
-            }
-            raw_summaries[unit.raw_id] = raw
-            payload["raws"].append(raw)
-        raw["best_score"] = max(float(raw["best_score"]), float(unit.score or 0.0))
-        raw["matched_units"].append(unit.chunk_id)
+    try:
+        manifest_raw = load_manifest(repo).get("raw_hashes", {})
+        raw_entries: dict[str, Any] = {}
+        raw_summaries: dict[str, dict[str, Any]] = {}
+        units: list[dict[str, Any]] = []
+        raws: list[dict[str, Any]] = []
+        selected_raw_ids = {str(raw.get("raw_id", "")) for raw in result.raws}
+        for unit in result.units:
+            units.append(_vector_unit_payload(unit))
+            if unit.raw_id not in selected_raw_ids:
+                continue
+            raw = raw_summaries.get(unit.raw_id)
+            if raw is None:
+                entry = _vector_raw_entry(repo, manifest_raw, raw_entries, unit.raw_id)
+                raw = {
+                    "raw_id": unit.raw_id,
+                    "title": entry.title if entry is not None else "",
+                    "event_date": entry.event_date if entry is not None else None,
+                    "best_score": float(unit.score or 0.0),
+                    "matched_units": [],
+                }
+                raw_summaries[unit.raw_id] = raw
+                raws.append(raw)
+            raw["best_score"] = max(float(raw["best_score"]), float(unit.score or 0.0))
+            raw["matched_units"].append(unit.chunk_id)
+    except Exception as error:
+        return {
+            "status": "corrupt",
+            "reason": f"vector supplemental metadata is unavailable: {error}",
+            "units": [],
+            "raws": [],
+        }
+    payload["units"] = units
+    payload["raws"] = raws
     return payload
 
 

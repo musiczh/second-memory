@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -16,14 +17,17 @@ from second_memory.compiler import (
     apply_response,
     build_compile_request,
     build_rebuild_request,
+    determine_update_mode,
+    finalize_rebuild,
     initialize,
     load_manifest,
     read_pending,
     rebuild_state,
     rebuild_workspace,
 )
-from second_memory.config import load_config, write_config
+from second_memory.config import VECTOR_CONFIG_KEYS, load_config, write_config
 from second_memory.embedding import EmbeddingSpec
+from second_memory.errors import ValidationError
 from second_memory.transaction import KnowledgeTransaction, recover_transaction, transaction_state
 from second_memory.vectors import VectorCacheError, VectorCacheState, reindex_vectors, vector_status
 from tests.helpers import raw_annotation_fields
@@ -131,6 +135,52 @@ class VectorTestRepository(unittest.TestCase):
 
 
 class KnowledgeVectorTransactionTest(VectorTestRepository):
+    def test_parseable_invalid_journal_shapes_are_corrupt(self) -> None:
+        tx = KnowledgeTransaction(self.repo, "session-journal-schema")
+        tx.prepare()
+        valid = json.loads(tx.journal.read_text(encoding="utf-8"))
+        cases = [
+            {},
+            {**valid, "schema": 1},
+            {**valid, "session_id": ""},
+            {**valid, "phase": "unknown"},
+            {**valid, "originals": []},
+            {**valid, "vectors": {**valid["vectors"], "included": "yes"}},
+            {**valid, "commit": 42},
+            {**valid, "unexpected": True},
+        ]
+        for index, payload in enumerate(cases):
+            with self.subTest(index=index):
+                tx.journal.write_text(json.dumps(payload), encoding="utf-8")
+                self.assertEqual("corrupt", transaction_state(self.repo)["state"])
+
+    def test_parseable_corrupt_promoted_journal_restores_core_backup(self) -> None:
+        marker = self.repo / "wiki/marker.md"
+        marker.write_text("original wiki\n", encoding="utf-8")
+        original_index = (self.repo / "index.md").read_bytes()
+        original_manifest = (self.repo / ".kb/manifest.json").read_bytes()
+        tx = KnowledgeTransaction(self.repo, "session-parseable-corrupt")
+        tx.prepare()
+        self.stage_current_core(tx)
+        (tx.wiki_next / "marker.md").write_text("promoted wiki\n", encoding="utf-8")
+        promoted_manifest = load_manifest(self.repo)
+        promoted_manifest["applied_session_id"] = tx.session_id
+        tx.stage_metadata(
+            index="promoted index\n",
+            manifest=promoted_manifest,
+            pending_rows=read_pending(self.repo),
+        )
+        tx.promote()
+        tx.journal.write_text("{}\n", encoding="utf-8")
+
+        self.assertEqual("corrupt", transaction_state(self.repo)["state"])
+        self.assertEqual("rolled_back_corrupt_journal", recover_transaction(self.repo))
+
+        self.assertEqual(original_index, (self.repo / "index.md").read_bytes())
+        self.assertEqual(original_manifest, (self.repo / ".kb/manifest.json").read_bytes())
+        self.assertEqual("original wiki\n", marker.read_text(encoding="utf-8"))
+        self.assertFalse(tx.root.exists())
+
     def test_promote_switches_ready_cache_and_rollback_restores_previous_cache(self) -> None:
         self.compile_without_vectors()
         live = self.repo / ".kb/vectors"
@@ -689,6 +739,39 @@ class RawOnlyRebuildVectorTest(VectorTestRepository):
         self.assertEqual("pending", result["vector_status"])
         self.assertIn("rebuild vectors failed", result["vector_reason"])
 
+    def test_finalize_preserves_supported_vector_config_and_disabled_state(self) -> None:
+        self.seed_compiled_raw()
+        source_config = load_config(self.repo)
+        source_config.update({
+            "vector_enabled": False,
+            "vector_min_score": 0.61,
+            "vector_scan_k": 17,
+            "vector_unit_limit": 7,
+            "vector_raw_limit": 0,
+            "vector_chunk_target": 240,
+            "vector_chunk_min": 60,
+            "vector_chunk_max": 280,
+            "vector_chunk_overlap": 0.2,
+        })
+        write_config(self.repo, source_config)
+        first_request = build_rebuild_request(self.repo)
+
+        with patch(
+            "second_memory.vectors.FastEmbedProvider",
+            side_effect=AssertionError("disabled rebuild must not construct a provider"),
+        ):
+            apply_rebuild_response(self.repo, self.replay_plan(first_request))
+            tail_request = build_rebuild_request(self.repo)
+            result = apply_rebuild_response(self.repo, self.consolidation_plan(tail_request))
+
+        final_config = load_config(self.repo)
+        self.assertEqual(
+            {key: source_config[key] for key in VECTOR_CONFIG_KEYS},
+            {key: final_config[key] for key in VECTOR_CONFIG_KEYS},
+        )
+        self.assertEqual("disabled", result["vector_status"])
+        self.assertEqual("disabled", vector_status(self.repo).status)
+
     def test_workspace_cleanup_failure_still_reindexes_once_and_returns_cleanup_error(self) -> None:
         self.seed_compiled_raw()
         first_request = build_rebuild_request(self.repo)
@@ -713,6 +796,26 @@ class RawOnlyRebuildVectorTest(VectorTestRepository):
         self.assertEqual("complete", load_manifest(self.repo)["rebuild"]["phase"])
         self.assertEqual("ready", result["vector_status"])
         self.assertIn("workspace cleanup failed", result["cleanup_error"])
+        self.assertTrue(workspace.exists())
+        self.assertEqual("complete", load_manifest(workspace)["rebuild"]["phase"])
+        self.assertFalse(rebuild_state(self.repo)["active"])
+        self.assertEqual("complete", rebuild_state(self.repo)["phase"])
+        self.assertEqual("noop", determine_update_mode(self.repo)["mode"])
+
+        with patch(
+            "second_memory.compiler.reindex_vectors",
+            side_effect=AssertionError("repeat finalize must not reindex"),
+        ) as repeat_reindex:
+            with self.assertRaisesRegex(ValidationError, "already complete"):
+                finalize_rebuild(self.repo)
+        repeat_reindex.assert_not_called()
+
+        with patch(
+            "second_memory.compiler.shutil.rmtree",
+            side_effect=OSError("residual workspace cleanup still failed"),
+        ):
+            with self.assertRaisesRegex(ValidationError, "residual rebuild workspace cleanup failed"):
+                build_rebuild_request(self.repo)
 
 
 if __name__ == "__main__":

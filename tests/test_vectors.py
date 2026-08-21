@@ -235,6 +235,17 @@ class VectorRepositoryTest(unittest.TestCase):
         self.assertEqual(1, manifest["raw_count"])
         self.assertEqual(sum(item["unit_count"] for item in manifest["raws"].values()), manifest["unit_count"])
         raw_info = manifest["raws"][raw_id]
+        self.assertEqual({
+            "schema", "provider", "model", "model_hash", "dimension", "spec",
+            "spec_fingerprint", "config_fingerprint", "input_fingerprint",
+            "raw_count", "unit_count", "raws",
+        }, set(manifest))
+        self.assertEqual({
+            "provider", "model", "dimension", "dtype", "normalization", "runtime", "model_hash",
+        }, set(manifest["spec"]))
+        self.assertEqual({
+            "path", "body_hash", "annotation_hash", "raw_fingerprint", "file", "file_hash", "unit_count",
+        }, set(raw_info))
         self.assertEqual(71, len(raw_info["body_hash"]))
         self.assertEqual(64, len(raw_info["annotation_hash"]))
         self.assertEqual(64, len(raw_info["raw_fingerprint"]))
@@ -244,9 +255,71 @@ class VectorRepositoryTest(unittest.TestCase):
         self.assertTrue(all(len(row["vector"]) == 512 for row in rows))
         summary = next(row for row in rows if row["kind"] == "summary")
         body = next(row for row in rows if row["kind"] == "body")
+        headline = next(row for row in rows if row["kind"] == "headline")
+        common = {"chunk_id", "raw_id", "kind", "vector", "body_hash", "annotation_hash"}
+        self.assertEqual(common, set(headline))
+        self.assertEqual(common | {"segment_index"}, set(summary))
+        self.assertEqual(common | {"section_index", "start", "end"}, set(body))
         self.assertEqual(0, summary["segment_index"])
         self.assertIn("start", body)
         self.assertIn("end", body)
+
+    def test_status_rejects_self_consistent_non_fixed_embedding_specs(self) -> None:
+        self.compile_raws([("固定模型契约", "固定模型契约正文" * 10)])
+        provider = FakeProvider()
+        manifest_path = self.repo / ".kb/vectors/manifest.json"
+        cases = [
+            ("dtype", "float64"),
+            ("normalization", "none"),
+            ("runtime", "cuda"),
+            ("model_hash", "A" * 64),
+            ("model_hash", "abc"),
+        ]
+        for field, value in cases:
+            with self.subTest(field=field, value=value):
+                reindex_vectors(self.repo, provider)
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                manifest["spec"][field] = value
+                if field == "model_hash":
+                    manifest["model_hash"] = value
+                canonical_spec = json.dumps(
+                    manifest["spec"],
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                manifest["spec_fingerprint"] = hashlib.sha256(canonical_spec.encode("utf-8")).hexdigest()
+                manifest_path.write_text(json.dumps(manifest, ensure_ascii=False) + "\n", encoding="utf-8")
+
+                self.assertEqual("corrupt", vector_status(self.repo).status)
+
+    def test_status_rejects_extra_manifest_spec_and_raw_info_fields(self) -> None:
+        raw_id = self.compile_raws([("精确缓存结构", "精确缓存结构正文" * 10)])[0]
+        provider = FakeProvider()
+        manifest_path = self.repo / ".kb/vectors/manifest.json"
+        mutations = [
+            lambda manifest: manifest.__setitem__("unexpected", True),
+            lambda manifest: manifest["spec"].__setitem__("unexpected", True),
+            lambda manifest: manifest["raws"][raw_id].__setitem__("unexpected", True),
+        ]
+        for index, mutate in enumerate(mutations):
+            with self.subTest(index=index):
+                reindex_vectors(self.repo, provider)
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                mutate(manifest)
+                manifest_path.write_text(json.dumps(manifest, ensure_ascii=False) + "\n", encoding="utf-8")
+
+                self.assertEqual("corrupt", vector_status(self.repo).status)
+
+    def test_status_rejects_body_snippet_and_unknown_jsonl_fields(self) -> None:
+        raw_id = self.compile_raws([("精确行结构", "精确行结构正文" * 10)])[0]
+        provider = FakeProvider()
+        for field in ("body", "snippet", "unexpected"):
+            with self.subTest(field=field):
+                reindex_vectors(self.repo, provider)
+                self.rewrite_cached_rows(raw_id, lambda rows: rows[0].__setitem__(field, "leak"))
+
+                self.assertEqual("corrupt", vector_status(self.repo).status)
 
     def test_status_rejects_missing_corrupt_dimension_and_stale_cache_as_a_whole(self) -> None:
         raw_ids = self.compile_raws([("完整性甲", "甲" * 90), ("完整性乙", "乙" * 90)])
@@ -517,6 +590,43 @@ class VectorRepositoryTest(unittest.TestCase):
 
         raw_path.write_text(frontmatter.dump_document({**meta, "summary": entry.annotations["summary"]}, body + "新增"), encoding="utf-8")
         self.assertEqual([f"raw:{raw_id}:body"], manifest_drift(self.repo))
+
+    def test_status_requires_main_manifest_raw_path_to_match_the_actual_source(self) -> None:
+        raw_ids = self.compile_raws([
+            ("路径校验甲", "路径校验甲正文" * 10),
+            ("路径校验乙", "路径校验乙正文" * 10),
+        ])
+        provider = FakeProvider()
+        reindex_vectors(self.repo, provider)
+        manifest_path = self.repo / ".kb/manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        original_path = manifest["raw_hashes"][raw_ids[0]]["path"]
+        wrong_paths = [
+            "raw/2099/01/missing.md",
+            manifest["raw_hashes"][raw_ids[1]]["path"],
+        ]
+        for wrong_path in wrong_paths:
+            with self.subTest(wrong_path=wrong_path):
+                manifest["raw_hashes"][raw_ids[0]]["path"] = wrong_path
+                manifest_path.write_text(json.dumps(manifest, ensure_ascii=False) + "\n", encoding="utf-8")
+                self.assertEqual("stale", vector_status(self.repo).status)
+        manifest["raw_hashes"][raw_ids[0]]["path"] = original_path
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False) + "\n", encoding="utf-8")
+        self.assertEqual("ready", vector_status(self.repo).status)
+
+    def test_zero_raw_limit_returns_no_raw_aggregates(self) -> None:
+        config = load_config(self.repo)
+        config["vector_raw_limit"] = 0
+        write_config(self.repo, config)
+        self.compile_raws([("零原料上限", "零原料上限正文" * 10)])
+        provider = FakeProvider()
+        reindex_vectors(self.repo, provider)
+
+        result = search_vectors(self.repo, "零原料上限", provider)
+
+        self.assertEqual("ready", result.status)
+        self.assertTrue(result.units)
+        self.assertEqual([], result.raws)
 
     def test_default_gitignore_excludes_vector_and_evaluation_caches(self) -> None:
         self.assertIn(".kb/vectors/\n", DEFAULT_GITIGNORE)

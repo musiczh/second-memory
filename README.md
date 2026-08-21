@@ -105,7 +105,7 @@ second-memory vectors evaluate \
 
 可使用 `--disable-headline`、`--disable-summary`、`--disable-body` 关闭对应向量单元。本次评测查询会在读取缓存 unit 后先过滤，再重新执行既有 scan、threshold 和 unit limit；过滤不会改写缓存，默认空 ablation 也不会改变线上检索排序。`expected_units` 仅在逐 query 证据中报告 `matched` 与 `missing`，不参与 Raw 相关性指标。
 
-报告分别给出 keyword、vector、union 的逐 query 排名和宏平均指标。union 完整保留 keyword 的原顺序，再追加 vector 中尚未出现的 Raw。Recall@5 以全部 relevant Raw 为分母；MRR 取首个相关 Raw 的倒数排名；nDCG@5 使用二元相关性；noise rate 是前 5 个去重结果中的非相关比例；zero-result rate 表示空结果比例。所有指标固定舍入到 6 位小数。
+报告分别给出 keyword、vector、union 的逐 query 排名和宏平均指标。每路 `rankings` 仅保留前 50 条审计证据，`ranking_counts` 记录完整排名数，`ranking_truncated` 标记是否截断；指标始终按未截断的完整排名计算。union 完整保留 keyword 的原顺序，再追加 vector 中尚未出现的 Raw。Recall@5 以全部 relevant Raw 为分母；MRR 取首个相关 Raw 的倒数排名；nDCG@5 使用二元相关性；noise rate 是前 5 个去重结果中的非相关比例；zero-result rate 表示空结果比例。所有指标固定舍入到 6 位小数。
 
 ### 回顾
 
