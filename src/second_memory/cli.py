@@ -41,6 +41,7 @@ from .retriever import search_level1, search_level2_request, vector_supplement
 from .reviewer import review_request
 from .store.git_store import GitStorage
 from .utils import json_dumps
+from .vector_eval import evaluate_repository
 from .vectors import reindex_vectors, search_vectors, vector_status
 from .wiki import build_wiki_html, build_wiki_model
 
@@ -313,6 +314,39 @@ def vectors_search(
     try:
         target = resolve_repo(repo)
         emit(command, vector_supplement(target, search_vectors(target, query)), json_output=True)
+    except Exception as exc:
+        fail(command, exc, json_output=True)
+
+
+@vectors_app.command("evaluate")
+def vectors_evaluate(
+    gold: str = typer.Option(..., "--gold", help="Gold JSONL path; relative paths resolve inside the knowledge base."),
+    disable_headline: bool = typer.Option(False, "--disable-headline"),
+    disable_summary: bool = typer.Option(False, "--disable-summary"),
+    disable_body: bool = typer.Option(False, "--disable-body"),
+    repo: Optional[str] = typer.Option(None, "--repo"),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    command = "vectors evaluate"
+    try:
+        target = resolve_repo(repo)
+        gold_path = Path(gold).expanduser()
+        if not gold_path.is_absolute():
+            gold_path = target / gold_path
+        disabled = {
+            unit_type
+            for unit_type, is_disabled in (
+                ("headline", disable_headline),
+                ("summary", disable_summary),
+                ("body", disable_body),
+            )
+            if is_disabled
+        }
+        emit(
+            command,
+            evaluate_repository(target, gold_path, disabled_unit_types=disabled),
+            json_output=True,
+        )
     except Exception as exc:
         fail(command, exc, json_output=True)
 

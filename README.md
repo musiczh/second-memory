@@ -87,6 +87,26 @@ second-memory search --query "职业规划" --level 1 --json
 second-memory search --query "职业规划" --level 2 --emit-request --json
 ```
 
+### 向量召回离线评测
+
+评测集使用 JSONL，每行固定包含非空 `query`、至少一个 `relevant_raw_ids`，可选的 `expected_units` 是期望召回的向量 `chunk_id` 数组：
+
+```json
+{"query":"如何改善睡眠拖延？","relevant_raw_ids":["raw-20260820-1200-0123abcd"],"expected_units":["chunk-example"]}
+```
+
+缓存必须已经 ready。评测只读取现有知识库与本地模型，不 reindex、不下载模型，也不改写 `.kb/vectors/`。相对 gold 路径以知识库根目录解析：
+
+```bash
+second-memory vectors evaluate \
+  --gold .kb/eval/vector-gold.jsonl \
+  --json
+```
+
+可使用 `--disable-headline`、`--disable-summary`、`--disable-body` 在评测层过滤对应向量单元；过滤不会改写缓存或改变线上检索排序。`expected_units` 仅在逐 query 证据中报告 `matched` 与 `missing`，不参与 Raw 相关性指标。
+
+报告分别给出 keyword、vector、union 的逐 query 排名和宏平均指标。union 完整保留 keyword 的原顺序，再追加 vector 中尚未出现的 Raw。Recall@5 以全部 relevant Raw 为分母；MRR 取首个相关 Raw 的倒数排名；nDCG@5 使用二元相关性；noise rate 是前 5 个去重结果中的非相关比例；zero-result rate 表示空结果比例。所有指标固定舍入到 6 位小数。
+
 ### 回顾
 
 ```bash
