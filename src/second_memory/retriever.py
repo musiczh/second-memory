@@ -178,7 +178,16 @@ def search_level2_request(repo: Path, query: str) -> dict[str, Any]:
             entry = read_raw_by_path(repo, path)
             snippets.append({"raw_id": entry.id, "title": entry.title, "event_date": entry.event_date, "snippet": entry.body[:500]})
     supplemental = l1["supplemental_raw"]
-    instructions = "请只基于 candidate_pages 与必要命中片段，归纳这些历史记录能为当前问题提供的个人上下文。"
+    instructions = (
+        "请直接回答用户当前问题。candidate_pages、source_snippets、vector_units 与 vector_raws "
+        "只提供个人化辅助证据，不是权威事实；先结合当前问题独立判断其相关性、时效性、可靠性和语境，"
+        "再决定采用、保留不确定性、指出冲突或忽略。过去的观点、策略和归纳仍带有当时的主观性与时间属性，"
+        "允许自然提到过去，但仅在确有帮助时使用，不得固定套用「你过去／你以前／你的历史」等开场。"
+        "answer_markdown 直接给出最终用户态答案；除非用户明确询问检索或调试，"
+        "不得在面向用户的回答中提及检索、向量、召回、命中、分数、Raw、原料、候选、编译层、噪声，"
+        "也不得解释采用或拒绝证据的过程。没有相关证据时也正常回答，不解释为何未使用。"
+        "来源追溯和证据限制只写入 used_pages 与 caveats。"
+    )
     return llm_request(
         "search_l2",
         read_text(repo / "AGENTS.md"),

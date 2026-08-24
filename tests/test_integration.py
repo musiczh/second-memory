@@ -411,6 +411,41 @@ class CompileIntegrationTest(RepositoryTestCase):
         self.assertEqual(raw_id, context["vector_raws"][0]["raw_id"])
         self.assertNotIn("二级请求只应携带命中单元，而非整篇原料正文。", json.dumps(context["vector_raws"], ensure_ascii=False))
 
+    def test_search_level2_instruction_keeps_retrieval_process_out_of_the_user_answer(self) -> None:
+        raw_id = self.add("用户态回答", "检索证据只辅助回答当前问题。", "2026-08-03")
+        self.apply_pending(states={raw_id: "内部证据不得泄漏到用户态回答"})
+
+        request = search_level2_request(self.repo, "我现在应该怎么做？")
+
+        instructions = request["instructions"]
+        self.assertIn("直接回答用户当前问题", instructions)
+        self.assertIn("不得在面向用户的回答中提及检索", instructions)
+        self.assertIn("没有相关证据时也正常回答", instructions)
+        self.assertNotIn("归纳这些历史记录", instructions)
+
+    def test_search_level2_instruction_treats_personal_history_as_fallible_context(self) -> None:
+        raw_id = self.add("历史判断", "过去形成的判断可能随时间和情境变化。", "2026-08-03")
+        self.apply_pending(states={raw_id: "个人历史只提供带时间与语境的辅助证据"})
+
+        request = search_level2_request(self.repo, "过去的判断现在还适用吗？")
+
+        instructions = request["instructions"]
+        self.assertIn("不是权威事实", instructions)
+        self.assertIn("独立判断", instructions)
+        self.assertIn("采用、保留不确定性、指出冲突或忽略", instructions)
+        self.assertIn("允许自然提到过去", instructions)
+        self.assertIn("不得固定套用", instructions)
+
+    def test_search_level2_schema_separates_user_answer_from_internal_traceability(self) -> None:
+        raw_id = self.add("审计边界", "用户回答和来源追溯需要分开。", "2026-08-03")
+        self.apply_pending(states={raw_id: "来源追溯不应进入用户态答案"})
+
+        schema = search_level2_request(self.repo, "给我一个直接建议")["response_schema"]
+
+        self.assertIn("只包含最终用户态回答", schema["answer_markdown"])
+        self.assertIn("内部审计", schema["used_pages"][0])
+        self.assertIn("不得写入 answer_markdown", schema["caveats"][0])
+
     def test_vector_supplement_bounds_raw_metadata_to_vector_raw_results(self) -> None:
         first = self.add("向量聚合甲", "向量聚合只回切实际入选的原料。", "2026-08-03")
         second = self.add("向量聚合乙", "未进入原料聚合的向量单元仍可作为单元证据。", "2026-08-04")

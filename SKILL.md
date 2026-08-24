@@ -100,13 +100,15 @@ Do not run `add`, `compile`, or any other write command until the user confirms.
 second-memory search --query "$QUERY" --level 1 --json
 ```
 
-If candidates are relevant, cite them as the user's historical notes. Only when deeper content is necessary:
+Answer the current question first. Treat candidate pages, source snippets, and vector results as fallible supporting context rather than authoritative truth. Evaluate their relevance, currentness, reliability, and original context independently before using them. A past experience may remain factual, while a past opinion, strategy, or inferred pattern may need qualification, challenge, or omission.
+
+Natural references to the user's past are allowed when they materially help the answer, but do not turn them into a fixed opening or enumerate retrieved history. Only when deeper content is necessary:
 
 ```bash
 second-memory search --query "$QUERY" --level 2 --emit-request --json
 ```
 
-Use only the returned candidate nodes and bounded source snippets. Make every personal-history claim traceable to a returned source.
+Use only the returned candidate nodes and bounded source snippets. Make every personal-history claim traceable to a returned source. Unless the user explicitly asks about retrieval or debugging, never expose retrieval, vector, recall, score, Raw, ingredient, candidate, compile-layer, noise, or evidence-selection language in the user-facing answer. If no relevant evidence exists, answer normally without explaining the retrieval result. Keep source traceability and evidence limitations in `used_pages` and `caveats`, not in `answer_markdown`.
 
 ## Recap And Review
 

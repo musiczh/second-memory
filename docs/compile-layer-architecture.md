@@ -491,6 +491,10 @@ rebuild 是对正常入库链路的确定性重放，不是旧编译页的数据
 
 ready 结果只返回 config 限制内的 top unit locator、短 snippet、score 和有界 Raw 元数据。`vector_raw_limit=0` 明确表示不返回 Raw aggregate。Topic／Consolidation 只能把这些命中用作已有 organizing question 的候选证据；不得由向量命中自动修改 membership、action、edge 或 `belongs_to`。
 
+Level 2 的 `candidate_pages`、`source_snippets`、`vector_units` 与 `vector_raws` 都只是回答当前问题的辅助证据，不是权威事实。Agent 必须结合当前问题独立判断历史信息的相关性、时效性、可靠性与语境，再决定采用、保留不确定性、指出冲突或忽略；过去形成的观点、方法与归纳不得被自动当成当前仍然正确的结论。允许在确有帮助时自然提及过去，但不得固定套用「你过去／你以前／你的历史」等表达。
+
+`answer_markdown` 只包含直接面向用户的最终回答。除非用户明确询问检索或调试，不得在其中展示检索、向量、召回、命中、分数、Raw、原料、候选、编译层、噪声或证据取舍过程；没有相关证据时也应正常回答。来源追溯与证据限制分别保留在 `used_pages`、`caveats` 中，不能回流到用户态答案。
+
 ### 5.4 事务与重建
 
 增量 Apply 可在同一 journal-coordinated transaction 中 staging 完整 `vectors.next`；只有 staged cache 自检 ready 才与核心投影一起 promotion。模型缺失、推理或 cache 构建失败时丢弃 vector stage，核心 Apply 仍可提交。journal 必须符合 schema 2 的严格结构；合法 JSON 但结构错误也视为 corrupt，从 backup 执行保守恢复。
