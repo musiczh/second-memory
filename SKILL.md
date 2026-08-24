@@ -102,7 +102,7 @@ second-memory search --query "$QUERY" --level 1 --json
 
 Answer the current question first. Treat candidate pages, source snippets, and vector results as fallible supporting context rather than authoritative truth. Evaluate their relevance, currentness, reliability, and original context independently before using them. A past experience may remain factual, while a past opinion, strategy, or inferred pattern may need qualification, challenge, or omission.
 
-Natural references to the user's past are allowed when they materially help the answer, but do not turn them into a fixed opening or enumerate retrieved history. Only when deeper content is necessary:
+After independent evaluation, when directly relevant and well-grounded history adds a stable preference, repeated pattern, or meaningful change over time, prefer one concise natural bridge to that history so the answer reflects continuous understanding. Integrate the anchor as a reason, a recurring pattern, or a before-and-now contrast; it need not use an explicit time marker and must not depend on one repeated phrasing. Usually use at most one history anchor unless the user asks for a retrospective; do not turn it into a fixed opening or enumerate retrieved history. Omit the history reference when the user asks not to use history, the evidence is weak or low-relevance, an unresolved conflict makes it unreliable, or it merely repeats the current input. Only when deeper content is necessary:
 
 ```bash
 second-memory search --query "$QUERY" --level 2 --emit-request --json

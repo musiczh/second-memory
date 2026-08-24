@@ -436,6 +436,30 @@ class CompileIntegrationTest(RepositoryTestCase):
         self.assertIn("允许自然提到过去", instructions)
         self.assertIn("不得固定套用", instructions)
 
+    def test_search_level2_instruction_prefers_one_natural_history_anchor_when_it_adds_value(self) -> None:
+        raw_id = self.add("稳定偏好", "用户重视理解、验收和可回滚边界。", "2026-08-03")
+        self.apply_pending(states={raw_id: "稳定偏好可以增强回答的连续理解"})
+
+        request = search_level2_request(self.repo, "这个小需求可以直接交给 Agent 吗？")
+
+        instructions = request["instructions"]
+        self.assertIn("稳定偏好、重复模式或判断演进", instructions)
+        self.assertIn("优先自然带出一句", instructions)
+        self.assertIn("通常最多一个历史锚点", instructions)
+        self.assertIn("不依赖「你已经／你之前／你过去」等固定句式", instructions)
+
+    def test_search_level2_instruction_omits_history_when_it_cannot_help_the_current_answer(self) -> None:
+        raw_id = self.add("低相关历史", "旧记录不能为了制造熟悉感而强行使用。", "2026-08-03")
+        self.apply_pending(states={raw_id: "历史表达需要服从当前问题"})
+
+        request = search_level2_request(self.repo, "别分析历史，直接告诉我现在做什么。")
+
+        instructions = request["instructions"]
+        self.assertIn("用户明确不要历史", instructions)
+        self.assertIn("低相关", instructions)
+        self.assertIn("只是在复述当前输入", instructions)
+        self.assertIn("不提过去", instructions)
+
     def test_search_level2_schema_separates_user_answer_from_internal_traceability(self) -> None:
         raw_id = self.add("审计边界", "用户回答和来源追溯需要分开。", "2026-08-03")
         self.apply_pending(states={raw_id: "来源追溯不应进入用户态答案"})
@@ -443,6 +467,7 @@ class CompileIntegrationTest(RepositoryTestCase):
         schema = search_level2_request(self.repo, "给我一个直接建议")["response_schema"]
 
         self.assertIn("只包含最终用户态回答", schema["answer_markdown"])
+        self.assertIn("高价值历史锚点", schema["answer_markdown"])
         self.assertIn("内部审计", schema["used_pages"][0])
         self.assertIn("不得写入 answer_markdown", schema["caveats"][0])
 
