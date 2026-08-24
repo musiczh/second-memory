@@ -15,6 +15,7 @@ This skill connects the host Agent to a local Markdown + Git personal knowledge 
 - When a successful apply envelope carries a top-level `tip`, relay that one-time usage suggestion naturally after the recap. Do not explain the tip mechanism. The CLI records seen tips transactionally in the manifest; never create or edit a separate tips state file.
 - Never edit a file under `raw/` directly. Use `add` for new user content. The CLI may add validated metadata while preserving the raw body hash and restoring read-only permissions.
 - Never send the whole raw archive for ordinary search or consolidation. Search Level 1 first; request Level 2 only for relevant candidates. Consolidation uses the bounded batch supplied by the CLI.
+- Vector retrieval is supplemental and read-only. A `pending`, `stale`, `missing`, `corrupt`, or `disabled` cache produces an explicit empty vector catalog and never blocks compile, consolidation, or topic refresh.
 - The CLI never calls an LLM. For compile, rebuild, consolidate, update, review, and Level-2 search, emit a request, reason over only that request, then return JSON matching its `response_schema`.
 - Preserve the `schema_version`, `session_id`, and `mode` from the emitted request. Never reuse an old response or infer a different apply mode.
 - Incremental compile and rebuild replay may create or update entity, event, and statement nodes. They may record merge/split candidates, but must not execute structural merge/split actions or create topics.
@@ -60,7 +61,7 @@ second-memory compile --emit-request --json
 
 Read `data.llm_request`. Return one V2.4 contract `CompilePlan v2` matching its schema:
 
-- Annotate each consumed raw with a concise summary, importance, optional emotion, and three explicit arrays: `mentions` for durable referents, `occurrences` for possible user-centered events, and `claims` for possible insight threads. Empty arrays are valid only when no action of the corresponding entity/event/statement type cites that raw; omitting a channel is never valid.
+- Every Raw annotation response must include `summary`, `importance`, `mentions`, `occurrences`, and `claims`. The `emotion` is optional and may be omitted. Empty annotation channels are valid only when no action of the corresponding entity/event/statement type cites that Raw. Do not return vector-only segmentation fields: the vector cache independently derives units from the Raw title, compiled summary, and deterministic Raw body chunks.
 - Returning zero node actions and zero `belongs_to` edges is valid when all three channels are empty. Prefer that outcome over promoting a routine chat, routine reading trigger, momentary state, or generic observation into a durable node.
 - Reuse an existing node with `target_id` when the resolver context identifies it.
 - Use a plan-local `ref` for a new node. The CLI owns final IDs and paths.
@@ -99,13 +100,15 @@ Do not run `add`, `compile`, or any other write command until the user confirms.
 second-memory search --query "$QUERY" --level 1 --json
 ```
 
-If candidates are relevant, cite them as the user's historical notes. Only when deeper content is necessary:
+Answer the current question first. Treat candidate pages, source snippets, and vector results as fallible supporting context rather than authoritative truth. Evaluate their relevance, currentness, reliability, and original context independently before using them. A past experience may remain factual, while a past opinion, strategy, or inferred pattern may need qualification, challenge, or omission.
+
+After independent evaluation, when directly relevant and well-grounded history adds a stable preference, repeated pattern, or meaningful change over time, prefer one concise natural bridge to that history so the answer reflects continuous understanding. Integrate the anchor as a reason, a recurring pattern, or a before-and-now contrast; it need not use an explicit time marker and must not depend on one repeated phrasing. Usually use at most one history anchor unless the user asks for a retrospective; do not turn it into a fixed opening or enumerate retrieved history. Omit the history reference when the user asks not to use history, the evidence is weak or low-relevance, an unresolved conflict makes it unreliable, or it merely repeats the current input. Only when deeper content is necessary:
 
 ```bash
 second-memory search --query "$QUERY" --level 2 --emit-request --json
 ```
 
-Use only the returned candidate nodes and bounded source snippets. Make every personal-history claim traceable to a returned source.
+Use only the returned candidate nodes and bounded source snippets. Make every personal-history claim traceable to a returned source. Unless the user explicitly asks about retrieval or debugging, never expose retrieval, vector, recall, score, Raw, ingredient, candidate, compile-layer, noise, or evidence-selection language in the user-facing answer. If no relevant evidence exists, answer normally without explaining the retrieval result. Keep source traceability and evidence limitations in `used_pages` and `caveats`, not in `answer_markdown`.
 
 ## Recap And Review
 
@@ -135,7 +138,7 @@ Compiled raw IDs accumulate in a bounded consolidation queue. A batch becomes du
 second-memory consolidate --emit-request --json
 ```
 
-When `data.llm_request` is present, reason only over its bounded raw annotations, compact index, aliases, candidates, related one-hop nodes, graph-wide `member_catalog`／`raw_catalog`, and `source_dates`. The full-library catalogs contain compiled node content and raw annotations, never raw bodies. A consolidation plan may:
+When `data.llm_request` is present, reason only over its bounded raw annotations, compact index, aliases, candidates, related one-hop nodes, graph-wide `member_catalog`／`raw_catalog`, read-only `vector_support_catalog`, and `source_dates`. The full-library catalogs contain compiled node content and raw annotations, never raw bodies. `vector_support_catalog` contains only bounded matches for organizing questions already persisted in topic contracts or stable topic candidates; it never changes the core catalogs. A consolidation plan may:
 
 - create a qualified topic;
 - merge nodes that confidently represent the same object;
@@ -169,6 +172,14 @@ For `life_domain`, relationship type is part of the boundary: partner／parent-c
 
 After the forward member check, run a reverse completeness audit over every unassigned statement and every persisted topic candidate. Test complete content and non-superseded evolution against every organizing question. If a recurring cohort is coherent but not ready, return one stable topic candidate containing its strongest node IDs and an explicit status/reason. Exclusions remain local membership boundaries; candidates record graph-wide themes that need more evidence. Neither mechanism permits forcing a node into a topic.
 
+When the Host Agent proposes a new organizing question that is not already persisted, it must first run:
+
+```bash
+second-memory vectors search --query "$ORGANIZING_QUESTION" --json
+```
+
+This explicit vector search is the workflow for a new organizing question. Treat every returned unit as candidate evidence only: it does not create membership, actions, edges, or `belongs_to` links. A Raw or compiled node becomes a member only after its own evidence passes the unchanged TopicContract member, statement, facet, and independent Raw capture thresholds. Never invent an organizing query from a candidate title or dump all cached vector units.
+
 Every topic action must return `source_ids=[]`. Topic sources are the exact union of current contained members' recursive raw sources; never copy old topic sources or append sources from removed members.
 
 Return `raw_annotations=[]` in every consolidation response. Consolidation consumes existing bounded annotations but cannot rewrite any raw annotation.
@@ -190,7 +201,7 @@ When the user asks to review, repair, or regenerate topic organization, use the 
 second-memory topics --emit-request --json
 ```
 
-The request includes every compiled node with content, source dates, compact raw annotations, existing topic memberships, and persisted candidates. It never includes raw bodies. Audit the old topics, then output a complete replacement topic set using only `create` topic actions and topic `contains` edges whose targets may be raw, entity, event, statement, or a plan-local child topic. Use plan-local refs instead of copying old IDs; the CLI may reuse a deterministic topic ID when the regenerated title is stable, but its content and membership are still fully replaced. Returning no topic is valid only with explicit candidate dispositions explaining the recurring cohorts reviewed. Before apply, perform both the member direct-contribution pass and the graph-wide recurring-cohort pass.
+The request includes every compiled node with content, source dates, compact raw annotations, existing topic memberships, persisted candidates, and an optional read-only `vector_support_catalog` for already persisted organizing questions. It never includes raw bodies. An unavailable vector cache leaves that catalog empty with status and reason and does not block the request. Audit the old topics, then output a complete replacement topic set using only `create` topic actions and topic `contains` edges whose targets may be raw, entity, event, statement, or a plan-local child topic. Use plan-local refs instead of copying old IDs; the CLI may reuse a deterministic topic ID when the regenerated title is stable, but its content and membership are still fully replaced. Returning no topic is valid only with explicit candidate dispositions explaining the recurring cohorts reviewed. Before apply, perform both the member direct-contribution pass and the graph-wide recurring-cohort pass.
 
 Apply the unchanged response:
 
@@ -260,6 +271,14 @@ The returned mode is authoritative:
 - `incremental`: uncompiled raw entries must be consumed.
 - `consolidate`: at least ten compiled raw entries are waiting for consolidation.
 - `noop`: nothing needs to change.
+
+The compiled-layer mode and `data.vector_update_mode` are independent. Finish any returned `llm_request` first, then inspect vector maintenance:
+
+- `full`: run `second-memory vectors reindex --json`; a cache schema, embedding spec, model hash, dimension, or chunk configuration fingerprint changed, or no reusable cache exists.
+- `incremental`: run `second-memory vectors reindex --json`; the command must embed only `data.vector_raw_ids`, reuse every compatible Raw vector file, remove `data.vector_removed_raw_ids`, and atomically replace the complete cache manifest.
+- `noop`: do not reindex.
+
+Never use `--force` during automatic maintenance. It is an explicit user recovery command that intentionally re-embeds every compiled Raw even when the global fingerprint is unchanged. Vector maintenance must never change `KB_VERSION`, raw annotations, compiled nodes, Wiki pages, or trigger a raw-only rebuild.
 
 When `llm_request` is present, produce its exact `CompilePlan v2` and apply it without changing `mode` or `session_id`:
 

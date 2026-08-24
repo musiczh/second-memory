@@ -144,9 +144,9 @@ def compile_response_schema(session_id: str = "session-from-request", mode: str 
 
 def search_response_schema() -> dict[str, Any]:
     return {
-        "answer_markdown": "基于候选节点的归纳回答",
-        "used_pages": ["entity-...|event-...|statement-...|topic-..."],
-        "caveats": ["知识库内容是用户历史视角"],
+        "answer_markdown": "只包含最终用户态回答；直接回应当前问题；符合契约时自然带出一句高价值历史锚点；不展示检索、证据筛选或内部推理过程",
+        "used_pages": ["仅用于内部审计的 entity-...|event-...|statement-...|topic-...；不在 answer_markdown 中枚举"],
+        "caveats": ["仅用于内部审计的证据限制或不确定性；不得写入 answer_markdown"],
     }
 
 

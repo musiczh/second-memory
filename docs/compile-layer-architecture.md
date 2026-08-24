@@ -1,8 +1,57 @@
 # 编译层数据组织与存储架构设计
 
-> 状态：V2.4 实施规范（继承 V2.3 事件与详情合同，覆盖 V2.2 主题成员模型）
-> 适用版本：`KB_VERSION >= 2.4.0`
-> 关联代码：`src/second_memory/compiler.py`、`retriever.py`、`recap.py`、`promptio.py`
+> 状态：V2.4 编译层＋独立向量缓存实施规范
+> 适用版本：`KB_VERSION = 2.4.0`，向量缓存使用独立 schema／全局指纹
+> 关联代码：`src/second_memory/compiler.py`、`vectors.py`、`retriever.py`、`wiki.py`
+
+## 0.0 独立 Raw 向量补充召回（优先级最高）
+
+向量能力只增加可重建的本地派生缓存，不改变 V2.4 的 CompilePlan、Raw 注解、TopicContract、action、edge 或来源闭包，也不提升 `KB_VERSION`。主链路固定为：
+
+```text
+immutable Raw body
+        │
+        ▼
+读取 Raw title、既有编译 summary 与 immutable body
+        │
+        ▼
+chunk（向量层确定性分块，code-point offsets 可回切 Raw）
+        │
+        ▼
+embed（固定本地 BGE／CPU／float32／L2 normalized）
+        │
+        ▼
+cache（.kb/vectors，JSONL 只保存 locator + vector，不复制正文）
+        │
+        ▼
+supplemental retrieval（有界 top units，回切短 snippet，只作候选证据）
+```
+
+增量 Apply 使用 transaction-coordinated、journal-recoverable 的多目录切换，而不是把多个目录误述为单个文件系统原子操作：
+
+```text
+incremental staging：vectors.next + Wiki + V2.4 Raw annotation + manifest
+                            │
+                            ├─ vectors.next ready
+                            │      └─▶ journal=promoting
+                            │             └─▶ 依次切换 vector/core 多个目录并持久化 journal
+                            │                    └─▶ Git commit → journal=committed → finalize
+                            │
+                            └─ vector pending/stale/missing/corrupt/disabled
+                                   └─▶ discard vectors.next → core-only commit
+
+进程中断：journal + marker + 实际目录拓扑
+                            └─▶ 确定性 rollback 或 finalize
+```
+
+Raw-only rebuild 的边界不同：workspace 核心投影先完成 promotion 和 Git commit；提交成功后才执行一次 `offline=True` 的向量协调。全局指纹兼容时只重建输入发生变化的 Raw；指纹不兼容时才全量 reindex。该操作是 best-effort，失败只返回向量降级状态，不回滚已经提交的 rebuild 核心结果。
+
+- 核心知识仍以不可变 Raw 和可审计编译投影为准；`.kb/vectors/` 是 Git 忽略、可删除重建的辅助缓存。
+- 普通 Apply、search、status 只允许使用本地模型；只有显式 `vectors reindex` 可以进入模型下载边界。缓存非 ready 时，检索输出和 Topic／Consolidation 请求返回明确 `status/reason` 与空向量结果，不能阻断核心工作流。
+- `search_level1` 的关键词／图谱候选、分数和顺序保持不变，向量结果只追加到 `supplemental_raw`。Level 2 只携带 top unit locator、短 snippet 和有界 Raw 元数据，不发送整篇 Raw。
+- Topic／Consolidation 的 `vector_support_catalog` 只对已有 topic contract 或稳定 topic candidate 中显式保存的 `organizing_question` 做有界检索。相同问题只搜索一次并聚合稳定 `source_refs`；唯一 query 最多 `vector_raw_limit` 条，catalog entry 全局最多 `vector_unit_limit` 条。不存在持久化问题时返回空目录；Host Agent 提出全新组织问题时，先显式执行 `second-memory vectors search`。
+- 向量命中只提供 `query`、来源 `source_refs`、`raw_id`、locator、短 snippet、score 与 cache status。相同 `(query, chunk_id)` 去重后按 score 和稳定 tie-break 全局排序。它不进入 `member_catalog/raw_catalog`，不自动产生成员、action、edge 或 `belongs_to`；成员仍须逐项通过 V2.4 TopicContract。
+- Wiki Raw 详情继续使用 V2.4 的 `summary`；向量分块信息只存在 `.kb/vectors/`，不写回 Raw 或 Wiki。
 
 ## 0. V2.4 实体覆盖、主题提炼与理解层契约（优先级最高）
 
@@ -155,14 +204,12 @@ CLI 只确定性校验 title/action 一致、类别、时间、事实性、来�
 
 当没有 rebuild、incremental 或正常 10 条 Consolidation，但 `semantic_quality.weak_detail` 检出跨节点重复详情或单节点编译政策措辞，或 `semantic_quality.weak_evidence` 检出共享却未点名实体的 claim 时，`update` 发出一次 `mode=consolidate`、`batch_size=0`、`quality_repair=true` 的最小质量修复请求，并分别显式列出 weak-detail 与 weak-evidence 节点 ID。该模式不消费 Consolidation 队列，只允许通过对应 session 的正式事务更新现有节点；投影图仍有任一跨节点重复详情、编译政策措辞或弱实体 evidence 时必须拒绝。普通手工空批 Consolidation 永远无效。调度优先级固定为 rebuild → incremental → 正常 Consolidation → quality-repair Consolidation → noop。
 
-> 本文后续章节保留的是早期方案推演，用于理解设计取舍；凡涉及向量索引、V1 产物演进、两记录成主题或与 0／0.1／0.2 节冲突的内容均不属于当前实施范围，不得作为编码依据。
-
-## 0.4 阅读前须知：历史设计假设
+## 0.4 阅读前须知：实施边界
 
 本设计在与需求方对齐时，以下三个关键决策被固定为默认假设，若与实际预期不符需先回退本章再改后续：
 
-1. **检索路线 = 结构化关联图谱为主 + 可选本地向量索引为辅（混合方案）**。
-   现有一级检索是纯关键词打分（见 [retriever.py](../src/second_memory/retriever.py) 的 `search_level1`），无法支撑「深度语义关联」。但直接引入外部向量库会破坏本项目三条既有哲学红线：CLI 绝不调用 LLM、数据全为本地 Markdown + git 可审计、相同输入产出稳定结果。因此本设计让 embedding 也走两段式协议（CLI 发出待向量化文本块 → Agent/宿主回灌向量 → CLI 落地为可 diff 的辅助索引），既补语义 gap 又不破坏哲学。
+1. **检索路线 = 既有 keyword／图谱候选 + 可选 Raw 向量补充证据**。
+   `search_level1` 的既有 candidates 和 hits 是主结果；本地 FastEmbed 只对 Raw 生成 supplemental cache，不索引 Wiki page，不由 Agent／宿主回灌向量，也不把向量结果自动转成图谱动作。
 
 2. **本设计是「现有结构的演进」而非「推倒重来」**。
    现有 `raw/ + wiki/{entities,topics,timeline} + index.md + .kb/manifest.json` 骨架保留，本文在其上增量补齐：实体关系边、观点演化结构、聚合动态诞生规则、语义索引层。
@@ -184,7 +231,7 @@ CLI 只确定性校验 title/action 一致、类别、时间、事实性、来�
 ### 1.2 架构约束（继承自现有项目哲学，不可降低）
 
 - **C1 原料不可变**：`raw/` 写入后只读（`0o444` + CLI guard），任何修正以新增记录表达，不改历史。
-- **C2 CLI 不调 LLM**：所有语义步骤（编译、实体抽取、向量化、深检索）走两段式 `--emit-request` / `--apply-response --stdin`。
+- **C2 CLI 不调 LLM**：编译、实体抽取和深检索的语义推理走两段式 `--emit-request` / `--apply-response --stdin`；Raw embedding 是固定的本地 FastEmbed 推理，不是 LLM 编译响应。
 - **C3 本地可审计**：所有编译产物是纯文本（Markdown / JSON），可被 `git diff` 审查，不引入黑盒二进制存储作为唯一真相源。
 - **C4 确定性**：相同输入产出稳定 ID、稳定排序、稳定字段。
 - **C5 可重建**：编译层是原料层的纯函数投影，任何时刻可从 `raw/` 全量重建（`rebuild` / `update --mode rebuild`）。这是版本演进的安全网。
@@ -198,8 +245,7 @@ CLI 只确定性校验 title/action 一致、类别、时间、事实性、来�
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │ L3 语义索引层 (Semantic Index)  —— 可选、可重建、辅助召回      │
-│   .kb/vectors/*.jsonl   实体/主题/时间线块的向量缓存           │
-│   .kb/graph.json        关系边的物化快照（供快速遍历）          │
+│   .kb/vectors/raw/*.jsonl   Raw locator + vector 的本地缓存       │
 ├─────────────────────────────────────────────────────────────┤
 │ L2 编译层 (Compiled / Wiki)     —— 结构化知识，可审计可 diff   │
 │   wiki/entities/   实体页（含关系边、别名）                    │
@@ -223,8 +269,8 @@ CLI 只确定性校验 title/action 一致、类别、时间、事实性、来�
 |-|-|-|
 | L1 | `raw/` 不可变原文 | 不变 |
 | L2 | entities / topics / timeline / index | 实体关系边、主题观点演化结构、聚合诞生规则 |
-| L3 | 无 | 向量缓存、关系图物化快照 |
-| L0 | pending / manifest | 关系边与向量的账本字段 |
+| L3 | 无 | Git-ignored Raw 向量补充缓存 |
+| L0 | pending / manifest | Raw annotation hash 与向量输入指纹 |
 
 ---
 
@@ -340,7 +386,7 @@ salience: 0.75
 
 - 所有编译页仍是 `frontmatter + markdown body`，复用现有 [frontmatter.py](../src/second_memory/frontmatter.py)。注意现有 frontmatter 是**扁平 kv + JSON 值**的极简格式，`relations`/`evolution` 这类嵌套结构需以 JSON 数组存于 frontmatter 值，或以约定行格式存于 body（演化线走 body、关系边走 frontmatter JSON 值）。
 - **不引入 YAML 嵌套**：保持现有解析器简单性。关系边用 `relations: [{"target":...,"kind":...,"weight":...}]` 的 JSON 单行值即可被现有 `_parse_value` 处理。
-- L3 语义索引层（向量、图快照）存于 `.kb/`，视为**可删除缓存**，不是真相源。删掉后 `rebuild` 能重建。
+- L3 Raw 向量缓存存于 `.kb/vectors/`，不是真相源，由显式 reindex 重建；核心 rebuild 提交后仅执行一次 local-only reindex。
 
 ---
 
@@ -412,7 +458,7 @@ rebuild 是对正常入库链路的确定性重放，不是旧编译页的数据
 7. 重放过程中每累计 10 条进入队列的耐久 raw，下一次 rebuild emit 就切换为一个 Consolidation 批次；批次成功消费后再继续下一条 raw。若中断时积压超过一批，则连续消费最早批次。10 条只决定常规审查时机，不保证必须创建 topic；全部 raw 重放完成后，若仍有 1—9 条尾批，必须在隔离 workspace 中再执行一次 final-tail Consolidation，使最终主题阅读审计覆盖全部 raw。普通增量 Consolidation 仍严格要求 10 条，只有 rebuild 的最终尾批允许部分批次。
 8. 若最后一次 apply 已写入 workspace、但正式库提升前中断，`update --emit-request` 返回 `mode=finalize` 与 `ready_to_finalize=true`，由 Agent 显式执行 `update --finalize`；emit 本身保持只读，也不得回灌旧 session。
 9. 重放完成且 Consolidation 队列清空后，才通过一次事务把完整 workspace 提升为正式 Wiki；尾批审查失败或 session 过期时保持 workspace 与队列不变。最终 manifest 不继承旧 redirect、candidate、memo、page 或 edge。
-10. 最终事务还会从 V2 默认值重建 `AGENTS.md`、`.gitignore` 与 `.kb/config.yaml`，仅保留 scope、agent、backend 等部署语义，并把 path 绑定到当前知识库，避免副本继续指向真实 V1。
+10. 最终事务从 V2 默认值重建核心配置，保留 scope、agent、backend 等部署语义与全部受支持的显式向量配置，不保留未知字段；同时重建 `AGENTS.md`、`.gitignore` 与 `.kb/config.yaml`，并把 path 绑定到当前知识库，避免副本继续指向真实 V1。
 
 兼容旧版已提前提升的尾批时，只允许一个可判定恢复分支：manifest 的 rebuild 必须已 `complete` 且 cursor 等于 total，`compiled_raw` 必须与 `ordered_raw_ids` 表示同一完整集合，当前 raw 归档仍与该 ordered 列表一致，Consolidation 队列必须恰为 ordered 列表的 1—9 条后缀，并且 `.kb/pending.jsonl` 为空。此时 `update`／`consolidate` 可补发一次 final-tail Consolidation；成功消费队列后条件自然失效。普通不足 10 条队列，以及 rebuild 后新增或增量编译过 raw 的知识库，不得进入该恢复分支。
 
@@ -420,151 +466,95 @@ rebuild 是对正常入库链路的确定性重放，不是旧编译页的数据
 
 ---
 
-## 5. 实体提取与语义关联、智能检索架构（对应 G2、G3、需求任务 3）
+## 5. Raw-only 本地向量补充召回
 
-### 5.1 实体提取
+### 5.1 输入与分块
 
-实体提取在编译期由 LLM 完成（C2），CLI 负责确定性落地与校验：
+向量索引只处理 manifest 中已编译的 Raw，不对 Wiki page、Topic 或 Agent 生成节点内容建索引。每条 Raw 固定生成三类 unit：`headline` 读取 Raw title，`summary` 读取既有 V2.4 编译摘要，`body` 由向量层按配置确定性分块；body locator 以 Unicode code-point offset 回切原文。Raw body、编译注解、Wiki 与主 manifest 不因建索引或检索而增加向量专用字段。
 
-- **抽取**：`compile --emit-request` 已把原文交给 LLM，LLM 按 `compile_response_schema` 输出 `entities`，每个含 `entity_kind / title / aliases / summary / sources`。
-- **归一（别名消歧）**：同一实体的不同写法（「芒格」「查理·芒格」「Charlie Munger」）通过 `aliases` 归并到同一 `entity-<slug>`。slug 由确定性 `slugify` 生成，保证 C4。编译期 LLM 负责识别别名并复用已有实体 ID（emit_request 里带 `existing_index` 供其对齐）。
-- **校验**：CLI 侧 `validate_compile_response` 校验 entity_kind 枚举、id 前缀、sources 合法性。
+每条向量 Raw 使用独立输入指纹，覆盖 title、编译 summary 与 body hash。主 manifest 只继续校验 V2.4 已有的 Raw path 与 body hash；summary 变化只使对应向量条目失效，不触发编译层 drift 或 raw-only rebuild。
 
-### 5.2 语义关联：结构化关系图谱（主路径）
+### 5.2 模型与缓存协议
 
-「深度语义关联」的第一支柱是**显式关系图谱**，比纯向量更可解释、可审计、可 diff：
+唯一 provider 是 FastEmbed，运行时固定为 CPU `onnxruntime-cpu`、`float32`、L2 normalized；provider、model、dimension 来自受支持的 vector config，model hash 必须是 64 位小写 SHA-256。普通 Apply、search、status、update 只使用本地模型，不触发下载；只有用户显式执行 `second-memory vectors reindex` 时才可进入下载边界，`--offline` 则强制只读本地 cache。
 
-- 关系边存于各页 frontmatter 的 `relations`（见 3.2 / 3.3）。
-- 图的**物化快照** `.kb/graph.json` 由 CLI 在 apply 阶段从所有页的 relations 聚合生成，供检索时快速遍历（避免每次读全部 md）。graph.json 是可重建缓存（C5）。
+`.kb/vectors/` 是 Git-ignored supplemental cache。manifest 与 spec 使用固定 exact-key schema；每条 Raw 的 JSONL 只保存 locator、input hashes 和 vector，不保存 body、snippet、text 或其他未知字段。全局指纹覆盖 `VECTOR_CACHE_SCHEMA`、embedding spec／模型哈希、维度和影响缓存的分块配置；这些任一项变化时旧向量整体不可复用。
 
-```json
-{
-  "schema": 1,
-  "nodes": {
-    "entity-charlie-munger": {"type": "entity", "kind": "person", "salience": 0.82},
-    "topic-multidisciplinary-mental-models": {"type": "topic", "salience": 0.6}
-  },
-  "edges": [
-    {"src": "entity-charlie-munger", "dst": "topic-multidisciplinary-mental-models", "kind": "relates_to", "weight": 5}
-  ]
-}
-```
+向量更新计划固定为：
 
-- **图谱扩散检索**：给定一个命中的实体，可沿 relations 扩散到相邻实体/主题（1~2 跳），把「聊到查理芒格」自动关联到「多元思维模型」「Poor Charlie's Almanack」。这是纯确定性的图遍历，不需 LLM。
+- `full`：缓存不存在、全局指纹变化，或缓存结构损坏到无法安全判断局部复用；重新向量化全部已编译 Raw。
+- `incremental`：全局指纹一致，只重新向量化缺失、文件损坏或输入指纹变化的 `vector_raw_ids`，删除已不存在的 `vector_removed_raw_ids`，其余 JSONL 原样复用。
+- `noop`：全局和逐 Raw 完整性均一致，不初始化 embedding provider，也不改写缓存。
 
-### 5.3 语义关联：可选本地向量索引（辅助路径）
+`second-memory vectors reindex` 默认执行上述协调；只有显式 `--force` 才在全局指纹未变化时仍全量重算。自动维护禁止使用 `--force`。
 
-关系图谱解决「已建立关联」的召回，但**用户问法与记录用词不同**时（问「婚姻」，记录写的是「和伴侣的相处」）关键词与图谱都可能漏召回。这里引入向量语义召回作为补充，且**严格遵守 C2/C3**：
+### 5.3 检索和补充证据
 
-**两段式向量化流程**（不破坏「CLI 不调 LLM」）：
+`search_level1` 先按既有规则产生 keyword candidates 与 hits，再把向量结果放入独立的 `supplemental_raw`。向量开关、cache 非 ready、本地模型缺失或 Raw 元数据回切失败都不得改变 keyword 候选和命中的值与顺序。失败的 supplemental 输出明确 `status/reason` 且 `units/raws` 为空，不泄漏部分证据。
 
-```
-compile/embed --emit-request
-  └─▶ CLI 输出待向量化的文本块清单 (page_id, chunk_id, text)
-        │
-        ▼
-     Agent/宿主调用 embedding 模型，回灌向量
-        │
-        ▼
-embed --apply-response --stdin
-  └─▶ CLI 把向量写入 .kb/vectors/<page_id>.jsonl（每行一个 chunk 的 id + 向量）
-```
+向量召回先扫描 45 个候选，再按 `score >= 0.58` 过滤；同一 Raw 内规范化文本相同的 headline／summary／body 单元只保留一个，同一 Raw 最多保留 3 个单元，最终按 score 与稳定 tie-break 返回最多 15 个单元。不同 Raw 的相同文本仍视为独立证据，不做跨 Raw 去重；达标结果不足 15 个时返回实际数量，不使用低分结果补齐。
 
-- 向量存为**文本化 JSONL**（float 数组），可被 git 追踪、可删除重建（C3/C5）。虽不适合逐字 diff，但满足「文本、可审计存在性、可重建」。
-- **检索时**：`search --level 2` 的 emit_request 增加一步——CLI 先对 query 做同样两段式取到 query 向量（或由 Agent 提供），再在本地 `.kb/vectors/` 做余弦相似度 top-k 召回候选页。相似度计算是纯 Python，无外部依赖、确定性。
-- 向量索引是**可选**的：未启用时检索降级为「关键词 + 图谱扩散」，功能不缺失，只是语义召回弱一些。通过 `config.yaml` 的开关控制。
+ready 结果只返回 config 限制内的 top unit locator、短 snippet、score 和有界 Raw 元数据。`vector_raw_limit=0` 明确表示不返回 Raw aggregate。Topic／Consolidation 只能把这些命中用作已有 organizing question 的候选证据；不得由向量命中自动修改 membership、action、edge 或 `belongs_to`。
 
-### 5.4 三层混合检索架构（G3 核心）
+Level 2 的 `candidate_pages`、`source_snippets`、`vector_units` 与 `vector_raws` 都只是回答当前问题的辅助证据，不是权威事实。Agent 必须结合当前问题独立判断历史信息的相关性、时效性、可靠性与语境，再决定采用、保留不确定性、指出冲突或忽略；过去形成的观点、方法与归纳不得被自动当成当前仍然正确的结论。
 
-把现有 level1/level2 演进为三级漏斗，兼顾轻量与深度：
+若可靠且与当前问题直接相关的历史能补充稳定偏好、重复模式或判断演进，Agent 应优先自然带出一句，让回答体现连续理解。历史锚点应按证据融入回答理由、再次出现的模式或前后变化，不必显式使用时间词，也不依赖「你已经／你之前／你过去」等固定句式；除非用户明确要求回顾，通常最多使用一个历史锚点，不枚举历史。用户明确不要历史、证据低相关、历史与当前事实冲突且尚未核实，或历史只是在复述当前输入时，不提过去；已经核实的变化或冲突可以作为判断演进自然说明，但当前事实仍然优先。
 
-```
-Query
-  │
-  ▼
-┌─ Level 1  轻量召回（纯本地、无 LLM、毫秒级）────────────────┐
-│  ① 关键词/别名打分（现有 search_level1）                    │
-│  ② 图谱扩散（命中实体 → relations 1 跳邻居）  ← 新增        │
-│  ③ 向量 top-k（若启用向量索引）              ← 新增(可选)   │
-│  → 合并去重，产出候选页 + salience 排序                     │
-└────────────────────────────────────────────────────────────┘
-  │  （候选足够回答简单问题时到此为止）
-  ▼
-┌─ Level 2  深度归纳（两段式，Agent 推理）────────────────────┐
-│  取 top-N 候选页全文 + 观点演化线 + 必要 raw 片段            │
-│  emit_request → Agent 归纳「历史能为当前问题提供的上下文」   │
-│  （现有 search_level2_request 演进：候选来源改为三路合并）   │
-└────────────────────────────────────────────────────────────┘
-  │
-  ▼
-┌─ Level 3  结合当下现状作答（Agent 侧，本库只供上下文）──────┐
-│  Agent 拿 Level 2 的历史上下文 + 当前对话现状，综合作答      │
-│  （呼应需求"结合历史记录 + 当下现状，给出懂我的回答"）       │
-└────────────────────────────────────────────────────────────┘
-```
+`answer_markdown` 只包含直接面向用户的最终回答。除非用户明确询问检索或调试，不得在其中展示检索、向量、召回、命中、分数、Raw、原料、候选、编译层、噪声或证据取舍过程；没有相关证据时也应正常回答。来源追溯与证据限制分别保留在 `used_pages`、`caveats` 中，不能回流到用户态答案。
 
-- Level 1 三路召回全部**本地确定性**，不调 LLM，满足回答前快速检索的低延迟诉求。
-- Level 2 才动用 LLM 归纳，控制成本（呼应 SKILL.md「Never send the whole raw archive to the model」）。
-- Level 3 是 Agent 的职责，本库只保证「把最相关的个人上下文准确、精炼地喂给它」。
+### 5.4 事务与重建
 
-### 5.5 检索质量的关键：写入即索引
+增量 Apply 可在同一 journal-coordinated transaction 中 staging 完整 `vectors.next`；只有 staged cache 自检 ready 才与核心投影一起 promotion。模型缺失、推理或 cache 构建失败时丢弃 vector stage，核心 Apply 仍可提交。journal 必须符合 schema 2 的严格结构；合法 JSON 但结构错误也视为 corrupt，从 backup 执行保守恢复。
 
-每次 `apply_response` 落地时，CLI 同步刷新：`index.md`（现有）、`graph.json`（新增）、`vectors/`（新增、可选）。保证检索面永远与编译层一致，无需单独的重建索引步骤（除非 `rebuild`）。
+Raw-only rebuild 的 workspace 不构建向量。核心最终提交后才执行一次 local-only 向量协调；全局指纹兼容时允许复用输入未变化的 Raw，只有不兼容时才全量 reindex。失败不回滚已提交的核心结果。清理 workspace 前必须先持久化 `rebuild.phase=complete`，使清理失败后的残留 workspace 不可被重复 finalize 或 reindex；显式新 rebuild 先只重试清理该残留目录。
 
 ---
 
-## 6. 演进路径与迁移
+## 6. 运行时状态与失败语义
 
-分阶段落地，每阶段独立可用、独立可 `rebuild`：
-
-| 阶段 | 内容 | KB_VERSION | 风险 |
-|-|-|-|-|
-| P1 | 主题页加「观点演化」段 + aggregation_kind + 诞生阈值规则 | bump minor | 低，纯 schema 扩展 |
-| P2 | 实体/主题加 relations + graph.json 物化 + Level1 图谱扩散 | bump minor | 中，需扩展 apply/validate |
-| P3 | salience + index.md 按显著度收敛 | bump minor | 中，影响一级检索面 |
-| P4 | 可选向量索引 + Level1 向量召回 + Level2 三路合并 | bump minor | 中高，引入 embedding 依赖（仅 Agent 侧） |
-
-- 每阶段落地即 bump `KB_VERSION`，用户下次 `update` 自动 `rebuild`，从不可变 raw 平滑迁移到新组织方式，**无数据迁移脚本**——这是 C5 带来的最大工程红利。
-- 向后兼容：老编译页缺新字段时，检索侧按缺省值处理（无 relations 即无扩散、无 salience 即默认收录），不阻断。
-
----
-
-## 7. 与现有代码的落点对照（便于实现）
-
-| 设计项 | 现有代码落点 | 改动性质 |
+| 状态 | 含义 | 检索行为 |
 |-|-|-|
-| 观点演化线 | `compiler.upsert_timeline` 的 line 合并可参考 | 新增 topic body 解析/合并 |
-| aggregation_kind / relations / salience | `promptio.compile_response_schema`、`validate_compile_response`、`page_from_topic/entity` | 扩展 schema 与校验 |
-| graph.json 物化 | `apply_response` 末尾 `refresh_index` 旁 | 新增 `refresh_graph` |
-| 图谱扩散召回 | `retriever.search_level1` | 新增第二路召回 |
-| 向量两段式 | 新增 `embed` 子命令，复用 `promptio.llm_request` 模式 | 新增 CLI 命令 + `.kb/vectors/` |
-| 三路合并 Level2 | `retriever.search_level2_request` | 候选来源改为三路合并 |
-| 版本化重建 | `version_drift` / `update` 的 rebuild 分支 | 无需改，天然支持 |
+| `ready` | manifest、spec、Raw fingerprints、JSONL 与 locators 全部通过校验 | 返回有界 supplemental |
+| `disabled` | `vector_enabled=false` | supplemental 为空，keyword 不变 |
+| `pending`／`missing` | 尚未建 cache、注解待编译或本地模型不可用 | supplemental 为空，核心流程继续 |
+| `stale` | config、全局指纹或某个 Raw 输入变化 | fail-closed，不返回 partial；维护时按 full／incremental 计划处理 |
+| `corrupt` | schema、hash、文件、vector 或 locator 无法完整验证 | fail-closed，不返回 partial |
+
+status 和 search 只检查本地状态。reindex 生成完整目标 cache manifest，复用兼容文件并只嵌入计划中的 Raw，随后原子切换并做整体状态校验；非 ready 时不提供 partial 结果。运行时 cache 不进入 Git index，rebuild 也不把它复制进核心 workspace。
+
+---
+
+## 7. 与现有代码的落点对照
+
+| 设计项 | 代码落点 |
+|-|-|
+| V2.4 Raw 注解与 rebuild promotion | `compiler.py` |
+| 独立全局／逐 Raw 指纹与确定性 body chunks | `vectors.py` |
+| 固定 embedding spec 与 text-free cache | `embedding.py`、`vectors.py` |
+| keyword 不变与 supplemental 回切 | `retriever.py` |
+| journal recovery 与 cache/core promotion | `transaction.py` |
+| 只读离线评测 | `vector_eval.py` |
 
 ---
 
 ## 8. 验证方式
 
-落地任一阶段后，至少通过：
+    python -m compileall -q src
+    second-memory status --json
+    second-memory search --query "熬夜" --level 1 --json
+    second-memory vectors status --json
+    second-memory vectors search --query "睡眠拖延" --json
+    second-memory vectors reindex --offline --json
+    second-memory vectors reindex --force --json
+    second-memory vectors evaluate --gold .kb/eval/vector-gold.jsonl --json
 
-```bash
-# 结构自检
-python -m compileall -q src
-second-memory --help
-second-memory status --json          # 核对 kb_version / compiled_kb_version / version_drift
+验收必须同时证明：
 
-# 可重建性验证（C5 的核心回归）：逐条 emit/apply 直到 rebuild_complete
-second-memory rebuild --emit-request --json
-# ... Agent 回灌 ...
-second-memory rebuild --apply-response --stdin --json
-
-# raw 重放完成后，rebuild 会继续发出有界 Consolidation 请求并最终事务提升
-second-memory rebuild --emit-request --json
-second-memory status --json          # manifest_drift 应为空
-
-# 检索验证
-second-memory search --query "熬夜" --level 1 --json     # 应召回演化聚合
-second-memory search --query "婚姻" --level 2 --emit-request --json
-```
-
-关键回归点：**同一份 raw 两次 rebuild 产出的 manifest pages hash 应稳定**（验证 C4 确定性）。
+1. Apply 前后 Raw body hash 不变，Raw 与主 manifest 不出现 `summary_segments`、`body_groups`、`body_sections` 或向量指纹等专用字段。
+2. 向量 enabled／disabled 或任意非 ready 状态下，keyword candidates／hits 结构和值保持一致。
+3. local-only 模型缺失时核心 Apply 仍成功，cache 明确降级且不安装 partial。
+4. ready cache 的每个 unit locator 都能回切到对应 Raw 文本；cache 文件不含全文字段且不被 Git 跟踪。
+5. 全局指纹变化会全量重算；指纹一致且仅少量 Raw 缺失或失效时只嵌入对应 Raw，并逐字节复用其他 JSONL。
+6. rebuild 最终只协调向量一次；cleanup 失败后状态已 complete，不会重复 finalize、commit 或 reindex。
+7. Topic vector evidence 只提供候选证据，不自动改变 membership、action 或 edge。
+8. evaluation 不改写知识库；报告中的排名证据有固定上限，指标仍按完整排名计算。

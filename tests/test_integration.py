@@ -22,6 +22,7 @@ from second_memory.compiler import (
     build_rebuild_request,
     build_topic_request,
     consolidation_state,
+    commit_message,
     create_session_id,
     determine_update_mode,
     finalize_rebuild,
@@ -32,8 +33,10 @@ from second_memory.compiler import (
     rebuild_state,
     rebuild_workspace,
 )
+from second_memory.config import load_config, write_config
 from second_memory.errors import StaleSessionError, ValidationError
-from second_memory.retriever import search_level1, search_level2_request
+from second_memory.retriever import search_level1, search_level2_request, vector_supplement
+from second_memory.vectors import VectorSearchResult, VectorUnit
 from second_memory.reviewer import collect_timeline_pages
 from second_memory.search import rg_hits
 from second_memory.store.git_store import GitStorage
@@ -41,7 +44,7 @@ from second_memory.transaction import KnowledgeTransaction, recover_transaction,
 from second_memory.utils import sha256_text
 from second_memory.wiki import build_wiki_model
 
-from tests.helpers import RepositoryTestCase, content, event_semantics, topic_attrs
+from tests.helpers import RepositoryTestCase as BaseRepositoryTestCase, content, event_semantics, raw_annotation_fields, topic_attrs
 
 
 CODE_UPDATE_ENV = {
@@ -58,7 +61,25 @@ CODE_UPDATE_ENV = {
 }
 
 
+class RepositoryTestCase(BaseRepositoryTestCase):
+    """Keep core integration fixtures independent from the optional local model."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        config = load_config(self.repo)
+        config["vector_enabled"] = False
+        write_config(self.repo, config)
+        if self.backend == "git":
+            GitStorage(self.repo).commit_paths("test: disable vectors", [".kb/config.yaml"])
+
+
 class CompileIntegrationTest(RepositoryTestCase):
+    def test_vector_release_keeps_rebuild_commit_on_v24_contract(self) -> None:
+        message = commit_message("rebuild", "rebuild", ["raw-1"], ["statement-1"])
+
+        self.assertTrue(message.startswith("chore(rebuild): 重建 v2.4 编译图谱\n"))
+        self.assertNotIn("v2.5", message)
+
     def test_zero_node_raw_compiles_without_polluting_graph_and_counts_for_consolidation(self) -> None:
         raw_id = self.add("普通聊天", "我今天和对象随口聊了几句，没有形成决定、承诺或结果。", "2026-08-05")
         request = build_compile_request(self.repo, mode="incremental")
@@ -68,7 +89,7 @@ class CompileIntegrationTest(RepositoryTestCase):
             "mode": "incremental",
             "raw_annotations": [{
                 "raw_id": raw_id,
-                "summary": "一次没有独立结果的普通聊天",
+                **raw_annotation_fields("一次没有独立结果的普通聊天"),
                 "importance": 1,
                 "emotion": "",
                 "mentions": [],
@@ -103,7 +124,7 @@ class CompileIntegrationTest(RepositoryTestCase):
             "mode": "incremental",
             "raw_annotations": [{
                 "raw_id": first_raw,
-                "summary": "首次记录心理咨询",
+                **raw_annotation_fields("首次记录心理咨询"),
                 "importance": 4,
                 "emotion": "平静",
                 "mentions": [{"text": "心理咨询", "kind": "concept", "confidence": 0.99}],
@@ -136,7 +157,7 @@ class CompileIntegrationTest(RepositoryTestCase):
             "mode": "incremental",
             "raw_annotations": [{
                 "raw_id": second_raw,
-                "summary": "再次记录心理咨询",
+                **raw_annotation_fields("再次记录心理咨询"),
                 "importance": 3,
                 "emotion": "平静",
                 "mentions": [{
@@ -199,7 +220,7 @@ class CompileIntegrationTest(RepositoryTestCase):
             "schema_version": 2,
             "session_id": request["context"]["session_id"],
             "mode": "incremental",
-            "raw_annotations": [{"raw_id": second_raw, "summary": "里程碑调整到 8 月 15 日", "importance": 4, "emotion": "专注", "mentions": [], "occurrences": [], "claims": [{"kind": "plan", "text": "里程碑调整到 8 月 15 日"}]}],
+            "raw_annotations": [{"raw_id": second_raw, **raw_annotation_fields("里程碑调整到 8 月 15 日"), "importance": 4, "emotion": "专注", "mentions": [], "occurrences": [], "claims": [{"kind": "plan", "text": "里程碑调整到 8 月 15 日"}]}],
             "node_actions": [{
                 "action": "change",
                 "target_id": statement_id,
@@ -236,7 +257,7 @@ class CompileIntegrationTest(RepositoryTestCase):
             "mode": "incremental",
             "raw_annotations": [{
                 "raw_id": second_raw,
-                "summary": "同一天形成新状态",
+                **raw_annotation_fields("同一天形成新状态"),
                 "importance": 4,
                 "emotion": "平静",
                 "mentions": [],
@@ -345,6 +366,190 @@ class CompileIntegrationTest(RepositoryTestCase):
         timeline = collect_timeline_pages(self.repo, range_name=None, on_this_day=None, start_date="2026-08-03", end_date="2026-08-03", max_days=7)
         self.assertEqual([], timeline)
 
+    def test_search_level1_preserves_keyword_payload_and_adds_bounded_raw_supplement(self) -> None:
+        raw_id = self.add("向量补充检索", "完整 Raw 正文不应作为补充结果返回给调用方。", "2026-08-03")
+        self.apply_pending(states={raw_id: "向量补充只提供可追溯的命中单元"})
+        baseline = search_level1(self.repo, "向量补充")
+        self.assertEqual({"status", "reason", "units", "raws"}, set(baseline["supplemental_raw"]))
+        self.assertEqual([], baseline["supplemental_raw"]["units"])
+        self.assertEqual([], baseline["supplemental_raw"]["raws"])
+        unit = VectorUnit(
+            chunk_id="unit-1", raw_id=raw_id, kind="body", text="完整 Raw 正文不应", start=0, end=10, score=0.91,
+        )
+        vector = VectorSearchResult("ready", "vector cache is ready", [unit], [{"raw_id": raw_id, "score": 0.91}])
+
+        with patch("second_memory.retriever.search_vectors", return_value=vector):
+            result = search_level1(self.repo, "向量补充")
+
+        self.assertEqual(
+            json.dumps({key: baseline[key] for key in ("query", "candidates", "hits")}, ensure_ascii=False),
+            json.dumps({key: result[key] for key in ("query", "candidates", "hits")}, ensure_ascii=False),
+        )
+        supplemental = result["supplemental_raw"]
+        self.assertEqual({"status", "reason", "units", "raws"}, set(supplemental))
+        self.assertEqual("ready", supplemental["status"])
+        self.assertEqual("完整 Raw 正文不应", supplemental["units"][0]["snippet"])
+        self.assertNotIn("完整 Raw 正文不应作为补充结果返回给调用方。", json.dumps(supplemental, ensure_ascii=False))
+        self.assertEqual(raw_id, supplemental["raws"][0]["raw_id"])
+        self.assertEqual(0.91, supplemental["raws"][0]["best_score"])
+
+    def test_search_level2_keeps_candidate_pages_and_adds_vector_evidence(self) -> None:
+        raw_id = self.add("二级向量证据", "二级请求只应携带命中单元，而非整篇原料正文。", "2026-08-03")
+        self.apply_pending(states={raw_id: "二级请求追加向量可追溯证据"})
+        unit = VectorUnit(
+            chunk_id="unit-2", raw_id=raw_id, kind="body", text="二级请求只应携带命中单元", start=0, end=12, score=0.88,
+        )
+        with patch(
+            "second_memory.retriever.search_vectors",
+            return_value=VectorSearchResult("ready", "ready", [unit], [{"raw_id": raw_id, "score": 0.88}]),
+        ):
+            request = search_level2_request(self.repo, "二级向量")
+
+        context = request["context"]
+        self.assertTrue(context["candidate_pages"])
+        self.assertEqual("unit-2", context["vector_units"][0]["chunk_id"])
+        self.assertEqual(raw_id, context["vector_raws"][0]["raw_id"])
+        self.assertNotIn("二级请求只应携带命中单元，而非整篇原料正文。", json.dumps(context["vector_raws"], ensure_ascii=False))
+
+    def test_search_level2_instruction_keeps_retrieval_process_out_of_the_user_answer(self) -> None:
+        raw_id = self.add("用户态回答", "检索证据只辅助回答当前问题。", "2026-08-03")
+        self.apply_pending(states={raw_id: "内部证据不得泄漏到用户态回答"})
+
+        request = search_level2_request(self.repo, "我现在应该怎么做？")
+
+        instructions = request["instructions"]
+        self.assertIn("直接回答用户当前问题", instructions)
+        self.assertIn("不得在面向用户的回答中提及检索", instructions)
+        self.assertIn("没有相关证据时也正常回答", instructions)
+        self.assertNotIn("归纳这些历史记录", instructions)
+
+    def test_search_level2_instruction_treats_personal_history_as_fallible_context(self) -> None:
+        raw_id = self.add("历史判断", "过去形成的判断可能随时间和情境变化。", "2026-08-03")
+        self.apply_pending(states={raw_id: "个人历史只提供带时间与语境的辅助证据"})
+
+        request = search_level2_request(self.repo, "过去的判断现在还适用吗？")
+
+        instructions = request["instructions"]
+        self.assertIn("不是权威事实", instructions)
+        self.assertIn("独立判断", instructions)
+        self.assertIn("采用、保留不确定性、指出冲突或忽略", instructions)
+        self.assertIn("允许自然提到过去", instructions)
+        self.assertIn("不得固定套用", instructions)
+
+    def test_search_level2_instruction_prefers_one_natural_history_anchor_when_it_adds_value(self) -> None:
+        raw_id = self.add("稳定偏好", "用户重视理解、验收和可回滚边界。", "2026-08-03")
+        self.apply_pending(states={raw_id: "稳定偏好可以增强回答的连续理解"})
+
+        request = search_level2_request(self.repo, "这个小需求可以直接交给 Agent 吗？")
+
+        instructions = request["instructions"]
+        self.assertIn("稳定偏好、重复模式或判断演进", instructions)
+        self.assertIn("优先自然带出一句", instructions)
+        self.assertIn("通常最多一个历史锚点", instructions)
+        self.assertIn("不依赖「你已经／你之前／你过去」等固定句式", instructions)
+
+    def test_search_level2_instruction_omits_history_when_it_cannot_help_the_current_answer(self) -> None:
+        raw_id = self.add("低相关历史", "旧记录不能为了制造熟悉感而强行使用。", "2026-08-03")
+        self.apply_pending(states={raw_id: "历史表达需要服从当前问题"})
+
+        request = search_level2_request(self.repo, "别分析历史，直接告诉我现在做什么。")
+
+        instructions = request["instructions"]
+        self.assertIn("用户明确不要历史", instructions)
+        self.assertIn("低相关", instructions)
+        self.assertIn("只是在复述当前输入", instructions)
+        self.assertIn("不提过去", instructions)
+
+    def test_search_level2_schema_separates_user_answer_from_internal_traceability(self) -> None:
+        raw_id = self.add("审计边界", "用户回答和来源追溯需要分开。", "2026-08-03")
+        self.apply_pending(states={raw_id: "来源追溯不应进入用户态答案"})
+
+        schema = search_level2_request(self.repo, "给我一个直接建议")["response_schema"]
+
+        self.assertIn("只包含最终用户态回答", schema["answer_markdown"])
+        self.assertIn("高价值历史锚点", schema["answer_markdown"])
+        self.assertIn("内部审计", schema["used_pages"][0])
+        self.assertIn("不得写入 answer_markdown", schema["caveats"][0])
+
+    def test_vector_supplement_bounds_raw_metadata_to_vector_raw_results(self) -> None:
+        first = self.add("向量聚合甲", "向量聚合只回切实际入选的原料。", "2026-08-03")
+        second = self.add("向量聚合乙", "未进入原料聚合的向量单元仍可作为单元证据。", "2026-08-04")
+        self.apply_pending(states={
+            first: "向量聚合只读取结果中明确选择的原料",
+            second: "未选择的原料无需读取元数据",
+        })
+        result = VectorSearchResult(
+            "ready",
+            "ready",
+            [
+                VectorUnit(chunk_id="unit-1", raw_id=first, kind="summary", text="一", score=0.9),
+                VectorUnit(chunk_id="unit-2", raw_id=second, kind="summary", text="二", score=0.8),
+            ],
+            [{"raw_id": first, "score": 0.9}],
+        )
+
+        supplemental = vector_supplement(self.repo, result)
+
+        self.assertEqual([first], [raw["raw_id"] for raw in supplemental["raws"]])
+
+    def test_vector_metadata_race_degrades_without_losing_keyword_results(self) -> None:
+        raw_id = self.add("向量元数据竞态", "关键词结果必须在向量原料读取失败时继续返回。", "2026-08-03")
+        self.apply_pending(states={raw_id: "向量元数据读取失败不影响关键词检索"})
+        baseline = search_level1(self.repo, "向量元数据")
+        vector = VectorSearchResult(
+            "ready",
+            "ready",
+            [VectorUnit(chunk_id="unit-race", raw_id=raw_id, kind="body", text="向量原料", start=0, end=4, score=0.9)],
+            [{"raw_id": raw_id, "score": 0.9}],
+        )
+
+        with patch("second_memory.retriever.search_vectors", return_value=vector), patch(
+            "second_memory.retriever.read_raw_by_path",
+            side_effect=OSError("Raw metadata disappeared"),
+        ):
+            result = search_level1(self.repo, "向量元数据")
+
+        self.assertEqual(baseline["candidates"], result["candidates"])
+        self.assertEqual(baseline["hits"], result["hits"])
+        self.assertEqual("corrupt", result["supplemental_raw"]["status"])
+        self.assertIn("Raw metadata disappeared", result["supplemental_raw"]["reason"])
+        self.assertEqual([], result["supplemental_raw"]["units"])
+        self.assertEqual([], result["supplemental_raw"]["raws"])
+
+    def test_vector_supplement_rejects_empty_and_wrong_raw_metadata_paths_atomically(self) -> None:
+        first = self.add("向量回切甲", "向量回切甲的关键词结果必须保留。", "2026-08-03")
+        second = self.add("向量回切乙", "向量回切乙用于验证错误路径。", "2026-08-04")
+        self.apply_pending(states={
+            first: "向量回切元数据错误不得影响关键词结果",
+            second: "另一条原料不得被当作目标原料回切",
+        })
+        baseline = search_level1(self.repo, "向量回切甲")
+        manifest_path = self.repo / ".kb/manifest.json"
+        original = load_manifest(self.repo)
+        wrong_paths = ["", original["raw_hashes"][second]["path"]]
+        vector = VectorSearchResult(
+            "ready",
+            "ready",
+            [VectorUnit(chunk_id="unit-path", raw_id=first, kind="body", text="向量回切", start=0, end=4, score=0.9)],
+            [{"raw_id": first, "score": 0.9}],
+        )
+
+        for wrong_path in wrong_paths:
+            with self.subTest(wrong_path=wrong_path or "empty"):
+                tampered = json.loads(json.dumps(original))
+                tampered["raw_hashes"][first]["path"] = wrong_path
+                manifest_path.write_text(json.dumps(tampered, ensure_ascii=False) + "\n", encoding="utf-8")
+                with patch("second_memory.retriever.search_vectors", return_value=vector):
+                    result = search_level1(self.repo, "向量回切甲")
+
+                self.assertEqual(baseline["candidates"], result["candidates"])
+                self.assertEqual(baseline["hits"], result["hits"])
+                self.assertEqual("corrupt", result["supplemental_raw"]["status"])
+                self.assertEqual([], result["supplemental_raw"]["units"])
+                self.assertEqual([], result["supplemental_raw"]["raws"])
+
+        manifest_path.write_text(json.dumps(original, ensure_ascii=False) + "\n", encoding="utf-8")
+
     def test_rg_hits_parses_single_index_file_with_colons_in_text(self) -> None:
         completed = type("Completed", (), {
             "stdout": "index.md:42:| event-id | 事件 | one-on-one | 2026-07-21 17:55 |\n",
@@ -427,7 +632,7 @@ class CompileIntegrationTest(RepositoryTestCase):
             "schema_version": 2,
             "session_id": request["context"]["session_id"],
             "mode": "incremental",
-            "raw_annotations": [{"raw_id": first_raw, "summary": "计划发布 v2", "importance": 4, "emotion": "期待", "mentions": [], "occurrences": [{"action": "发布 Second Memory v2", "subject_role": "user", "started_at": "2026-08-20", "factuality": "planned", "event_basis": "milestone", "standalone_reason": "版本发布有明确承诺、日期和交付结果，脱离相关解释后仍值得进入项目时间线。", "confidence": 0.95}], "claims": []}],
+            "raw_annotations": [{"raw_id": first_raw, **raw_annotation_fields("计划发布 v2"), "importance": 4, "emotion": "期待", "mentions": [], "occurrences": [{"action": "发布 Second Memory v2", "subject_role": "user", "started_at": "2026-08-20", "factuality": "planned", "event_basis": "milestone", "standalone_reason": "版本发布有明确承诺、日期和交付结果，脱离相关解释后仍值得进入项目时间线。", "confidence": 0.95}], "claims": []}],
             "node_actions": [{
                 "action": "create",
                 "ref": "release",
@@ -461,7 +666,7 @@ class CompileIntegrationTest(RepositoryTestCase):
             "schema_version": 2,
             "session_id": request["context"]["session_id"],
             "mode": "incremental",
-            "raw_annotations": [{"raw_id": second_raw, "summary": "v2 已发布", "importance": 5, "emotion": "轻松", "mentions": [], "occurrences": [{"action": "发布 Second Memory v2", "subject_role": "user", "started_at": "2026-08-20", "factuality": "occurred", "event_basis": "milestone", "standalone_reason": "版本发布有明确交付结果和发生日期，脱离相关解释后仍值得进入项目时间线。", "confidence": 0.95}], "claims": []}],
+            "raw_annotations": [{"raw_id": second_raw, **raw_annotation_fields("v2 已发布"), "importance": 5, "emotion": "轻松", "mentions": [], "occurrences": [{"action": "发布 Second Memory v2", "subject_role": "user", "started_at": "2026-08-20", "factuality": "occurred", "event_basis": "milestone", "standalone_reason": "版本发布有明确交付结果和发生日期，脱离相关解释后仍值得进入项目时间线。", "confidence": 0.95}], "claims": []}],
             "node_actions": [{
                 "action": "change",
                 "target_id": event_id,
@@ -493,7 +698,7 @@ class CompileIntegrationTest(RepositoryTestCase):
             "schema_version": 2,
             "session_id": request["context"]["session_id"],
             "mode": "incremental",
-            "raw_annotations": [{"raw_id": third_raw, "summary": "发布记录被后续版本替代", "importance": 3, "emotion": "", "mentions": [], "occurrences": [{"action": "发布 Second Memory v2", "subject_role": "user", "started_at": "2026-08-20", "factuality": "occurred", "event_basis": "milestone", "standalone_reason": "原发布记录的有效状态已经发生变化，脱离相关解释后仍需要在项目时间线上追溯。", "confidence": 0.95}], "claims": []}],
+            "raw_annotations": [{"raw_id": third_raw, **raw_annotation_fields("发布记录被后续版本替代"), "importance": 3, "emotion": "", "mentions": [], "occurrences": [{"action": "发布 Second Memory v2", "subject_role": "user", "started_at": "2026-08-20", "factuality": "occurred", "event_basis": "milestone", "standalone_reason": "原发布记录的有效状态已经发生变化，脱离相关解释后仍需要在项目时间线上追溯。", "confidence": 0.95}], "claims": []}],
             "node_actions": [{
                 "action": "supersede",
                 "target_id": event_id,
@@ -531,7 +736,7 @@ class CompileIntegrationTest(RepositoryTestCase):
             "schema_version": 2,
             "session_id": request["context"]["session_id"],
             "mode": "incremental",
-            "raw_annotations": [{"raw_id": first_raw, "summary": "计划 8 月 12 日完成", "importance": 4, "emotion": "", "mentions": [], "occurrences": [{"action": "完成 CompilePlan v2", "subject_role": "user", "started_at": "2026-08-12", "factuality": "planned", "event_basis": "milestone", "standalone_reason": "该交付有明确完成日期和验收结果，脱离计划说明后仍值得进入项目时间线。", "confidence": 0.95}], "claims": []}],
+            "raw_annotations": [{"raw_id": first_raw, **raw_annotation_fields("计划 8 月 12 日完成"), "importance": 4, "emotion": "", "mentions": [], "occurrences": [{"action": "完成 CompilePlan v2", "subject_role": "user", "started_at": "2026-08-12", "factuality": "planned", "event_basis": "milestone", "standalone_reason": "该交付有明确完成日期和验收结果，脱离计划说明后仍值得进入项目时间线。", "confidence": 0.95}], "claims": []}],
             "node_actions": [{
                 "action": "create",
                 "ref": "milestone",
@@ -563,7 +768,7 @@ class CompileIntegrationTest(RepositoryTestCase):
             "schema_version": 2,
             "session_id": request["context"]["session_id"],
             "mode": "incremental",
-            "raw_annotations": [{"raw_id": second_raw, "summary": "截止日期调整到 8 月 15 日", "importance": 4, "emotion": "", "mentions": [], "occurrences": [{"action": "完成 CompilePlan v2", "subject_role": "user", "started_at": "2026-08-15", "factuality": "planned", "event_basis": "milestone", "standalone_reason": "交付日期已明确调整并形成新的承诺，脱离说明后仍需要在项目时间线上回顾。", "confidence": 0.95}], "claims": []}],
+            "raw_annotations": [{"raw_id": second_raw, **raw_annotation_fields("截止日期调整到 8 月 15 日"), "importance": 4, "emotion": "", "mentions": [], "occurrences": [{"action": "完成 CompilePlan v2", "subject_role": "user", "started_at": "2026-08-15", "factuality": "planned", "event_basis": "milestone", "standalone_reason": "交付日期已明确调整并形成新的承诺，脱离说明后仍需要在项目时间线上回顾。", "confidence": 0.95}], "claims": []}],
             "node_actions": [{
                 "action": "change",
                 "target_id": event_id,
@@ -765,7 +970,7 @@ class ConsolidationIntegrationTest(RepositoryTestCase):
             "mode": "incremental",
             "raw_annotations": [{
                 "raw_id": raw["id"],
-                "summary": "该原料没有形成耐久节点",
+                **raw_annotation_fields("该原料没有形成耐久节点"),
                 "importance": 1,
                 "emotion": "",
                 "mentions": [],
@@ -1067,7 +1272,7 @@ class EntityEvidenceApplyIntegrationTest(RepositoryTestCase):
             "raw_annotations": [
                 {
                     "raw_id": raw_id,
-                    "summary": title,
+                    **raw_annotation_fields(title),
                     "importance": 3,
                     "emotion": "",
                     "mentions": [{"text": title, "kind": "concept", "confidence": 0.99}],
@@ -1113,7 +1318,7 @@ class QualityRepairIntegrationTest(RepositoryTestCase):
             "raw_annotations": [
                 {
                     "raw_id": raw_id,
-                    "summary": title,
+                    **raw_annotation_fields(title),
                     "importance": 3,
                     "emotion": "",
                     "mentions": [{"text": title, "kind": "concept", "confidence": 0.99}],
@@ -1631,7 +1836,7 @@ class RawOnlySequentialRebuildTest(RepositoryTestCase):
         (self.repo / ".kb" / "manifest.json").write_text(json.dumps(legacy_manifest, ensure_ascii=False), encoding="utf-8")
         (self.repo / ".kb" / "pending.jsonl").write_text("", encoding="utf-8")
         (self.repo / ".kb" / "config.yaml").write_text(
-            'schema: 1\nscope: "agent"\nagent: "test"\npath: "/v1/leaked/path"\nbackend: "plain"\ncompile_version: 1\n',
+            'schema: 1\nscope: "agent"\nagent: "test"\npath: "/v1/leaked/path"\nbackend: "plain"\ncompile_version: 1\nvector_enabled: false\n',
             encoding="utf-8",
         )
         (self.repo / "AGENTS.md").write_text("# v1 编译规则\n", encoding="utf-8")
@@ -1664,7 +1869,7 @@ class RawOnlySequentialRebuildTest(RepositoryTestCase):
             "schema_version": 2,
             "session_id": context["session_id"],
             "mode": "rebuild",
-            "raw_annotations": [{"raw_id": raw_id, "summary": f"{raw['title']} 的 v2 摘要", "importance": 3, "emotion": "", "mentions": [], "occurrences": [], "claims": [{"kind": "insight", "text": str(raw["body"]).strip()}]}],
+            "raw_annotations": [{"raw_id": raw_id, **raw_annotation_fields(f"{raw['title']} 的 v2 摘要"), "importance": 3, "emotion": "", "mentions": [], "occurrences": [], "claims": [{"kind": "insight", "text": str(raw["body"]).strip()}]}],
             "node_actions": [{
                 "action": "create",
                 "ref": ref,
@@ -1702,7 +1907,11 @@ class RawOnlySequentialRebuildTest(RepositoryTestCase):
 
         self.assertEqual("rebuild", context["mode"])
         self.assertEqual([self.ordered_raw[0]["id"]], [item["id"] for item in context["raw_entries"]])
-        self.assertEqual({"phase": "replay", "step": 1, "total": 3, "completed": 0}, context["rebuild"])
+        self.assertEqual(
+            {"phase": "replay", "step": 1, "total": 3, "completed": 0},
+            {key: context["rebuild"][key] for key in ("phase", "step", "total", "completed")},
+        )
+        self.assertRegex(context["rebuild"]["run_id"], r"^[0-9a-f]{32}$")
         self.assertEqual([], context["existing_nodes"])
         self.assertEqual({}, context["redirects"])
         self.assertEqual([], context["existing_candidates"])
@@ -1735,7 +1944,11 @@ class RawOnlySequentialRebuildTest(RepositoryTestCase):
         next_request = build_rebuild_request(self.repo)
         next_context = next_request["context"]
         self.assertEqual([self.ordered_raw[1]["id"]], [item["id"] for item in next_context["raw_entries"]])
-        self.assertEqual({"phase": "replay", "step": 2, "total": 3, "completed": 1}, next_context["rebuild"])
+        self.assertEqual(
+            {"phase": "replay", "step": 2, "total": 3, "completed": 1},
+            {key: next_context["rebuild"][key] for key in ("phase", "step", "total", "completed")},
+        )
+        self.assertEqual(first_request["context"]["rebuild"]["run_id"], next_context["rebuild"]["run_id"])
         self.assertEqual(1, len(next_context["existing_nodes"]))
         self.assertEqual([first_raw_id], next_context["existing_nodes"][0]["sources"])
         self.assertNotIn("topic-v1-legacy", {node["id"] for node in next_context["existing_nodes"]})
@@ -1763,7 +1976,7 @@ class RawOnlySequentialRebuildTest(RepositoryTestCase):
             "mode": "rebuild",
             "raw_annotations": [{
                 "raw_id": raw["id"],
-                "summary": "原料没有形成耐久节点",
+                **raw_annotation_fields("原料没有形成耐久节点"),
                 "importance": 1,
                 "emotion": "",
                 "mentions": [],

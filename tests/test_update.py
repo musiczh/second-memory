@@ -12,7 +12,8 @@ from typer.testing import CliRunner
 
 from second_memory import cli as cli_module
 from second_memory.cli import app
-from second_memory.compiler import load_manifest
+from second_memory.compiler import determine_update_mode, load_manifest
+from second_memory.vectors import VectorUpdatePlan
 from second_memory.errors import SecondMemoryError
 from second_memory.store.git_store import GitStorage
 from second_memory.utils import json_dumps
@@ -151,6 +152,40 @@ class UpdateVersionRoutingTest(RepositoryTestCase):
         self.assertFalse(data["version_changed"])
         self.assertTrue(data["code_update"]["updated"])
         self.assertEqual(UPDATED_CODE_UPDATE, data["code_update"])
+
+    def test_vector_release_keeps_existing_v24_compile_layer(self) -> None:
+        manifest_path = self.repo / ".kb" / "manifest.json"
+        manifest = load_manifest(self.repo)
+        manifest["kb_version"] = "2.4.0"
+        manifest_path.write_text(json_dumps(manifest) + "\n", encoding="utf-8")
+
+        decision = determine_update_mode(self.repo)
+
+        self.assertEqual("noop", decision["mode"])
+        self.assertFalse(decision["version_changed"])
+
+    def test_vector_cache_state_only_adds_reindex_hint_without_changing_update_mode(self) -> None:
+        vector_plan = VectorUpdatePlan("incremental", "one Raw is missing", ["raw-missing"], [])
+        with patch("second_memory.compiler.plan_vector_update", return_value=vector_plan):
+            decision = determine_update_mode(self.repo)
+
+        self.assertEqual("noop", decision["mode"])
+        self.assertTrue(decision["vector_reindex_required"])
+        self.assertEqual("incremental", decision["vector_update_mode"])
+        self.assertEqual(["raw-missing"], decision["vector_raw_ids"])
+        self.assertEqual({
+            "mode", "pending", "drift", "version_changed", "consolidation_pending", "rebuild",
+            "quality_repair", "weak_detail_node_ids", "weak_evidence_node_ids", "vector_reindex_required",
+            "vector_update_mode", "vector_raw_ids", "vector_removed_raw_ids", "vector_reason",
+        }, set(decision))
+
+    def test_vector_planning_failure_does_not_block_compile_update_decision(self) -> None:
+        with patch("second_memory.compiler.plan_vector_update", side_effect=RuntimeError("cache unreadable")):
+            decision = determine_update_mode(self.repo)
+
+        self.assertEqual("noop", decision["mode"])
+        self.assertEqual("full", decision["vector_update_mode"])
+        self.assertIn("cache unreadable", decision["vector_reason"])
 
     def test_database_version_mismatch_routes_to_rebuild(self) -> None:
         manifest_path = self.repo / ".kb" / "manifest.json"

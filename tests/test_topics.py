@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import json
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
+from second_memory import frontmatter
+from second_memory.compiler import build_consolidation_request, build_topic_request, load_manifest
 from second_memory.errors import ValidationError
 from second_memory.models import Node, RawEntry
 from second_memory.topics import member_contains_excerpt, validate_materialized_topic_contracts, validate_topic_plan
+from second_memory.vectors import VectorCacheState, VectorSearchResult, VectorUnit
 
-from tests.helpers import content, topic_attrs
+from tests.helpers import RepositoryTestCase, content, topic_attrs
 
 
 class TopicContractTest(unittest.TestCase):
@@ -107,6 +112,18 @@ class TopicContractTest(unittest.TestCase):
             self.raws,
             replace_all=True,
         )
+
+    def test_minimum_member_contract_remains_five(self) -> None:
+        members = [f"statement-{index}" for index in range(4)]
+
+        with self.assertRaisesRegex(ValidationError, "at least five direct members"):
+            validate_topic_plan(
+                [self.action("topic-vector-short", members, "statement-5")],
+                self.edges("topic-vector-short", members),
+                self.nodes,
+                self.raws,
+                replace_all=True,
+            )
 
     def test_direct_entity_member_is_allowed_when_grounded(self) -> None:
         members = ["statement-0", "statement-1", "statement-2", "statement-3", "entity-place"]
@@ -479,6 +496,378 @@ class TopicContractTest(unittest.TestCase):
                 self.raws,
                 replace_all=True,
             )
+
+
+class TopicVectorSupportRequestTest(RepositoryTestCase):
+    topic_query = "用户如何通过稳定机制和行动反馈持续修正长期实践？"
+    candidate_query = "哪些跨记录证据能够解释边界判断如何逐步形成？"
+    bounded_queries = [f"持久化组织问题 {index} 如何形成稳定且可验证的长期结构？" for index in range(5)]
+
+    def setUp(self) -> None:
+        super().setUp()
+        for index in range(10):
+            raw_id = f"raw-vector-{index}"
+            frontmatter.write_document(
+                self.repo / "raw" / "2026" / "08" / f"{raw_id}.md",
+                {
+                    "id": raw_id,
+                    "type": "raw",
+                    "title": f"向量证据 {index}",
+                    "created": f"2026-08-{index + 1:02d}T09:00:00+08:00",
+                    "event_date": f"2026-08-{index + 1:02d}",
+                    "tags": ["vector"],
+                    "summary": f"向量证据 {index} 的 headline",
+                    "summary_segments": [f"向量证据 {index} 的有序摘要段"],
+                    "mentions": [],
+                    "occurrences": [],
+                    "claims": [],
+                },
+                f"完整 Raw 正文 {index} 不得进入向量支持目录。",
+            )
+        frontmatter.write_document(
+            self.repo / "wiki" / "topics" / "topic-existing.md",
+            {
+                "id": "topic-existing",
+                "type": "topic",
+                "title": "既有主题",
+                "summary": "既有主题摘要",
+                "sources": ["raw-vector-0"],
+                "attrs": {"topic_contract": {"organizing_question": self.topic_query}},
+            },
+            "既有主题正文",
+        )
+        frontmatter.write_document(
+            self.repo / "wiki" / "statements" / "statement-candidate.md",
+            {
+                "id": "statement-candidate",
+                "type": "statement",
+                "title": "候选洞察",
+                "summary": "候选洞察摘要",
+                "sources": ["raw-vector-1"],
+                "current_state": "候选洞察当前状态",
+            },
+            "候选洞察正文",
+        )
+        manifest = load_manifest(self.repo)
+        manifest["consolidation"]["pending_raw"] = [f"raw-vector-{index}" for index in range(10)]
+        manifest["candidates"] = [
+            {
+                "candidate_id": "candidate-watching",
+                "kind": "topic",
+                "node_ids": ["statement-candidate"],
+                "title": "观察中的候选",
+                "topic_kind": "life_domain",
+                "status": "watching",
+                "reason": "证据仍在积累。",
+                "organizing_question": self.candidate_query,
+                "confidence": 0.6,
+            },
+            {
+                "candidate_id": "candidate-without-query",
+                "kind": "topic",
+                "node_ids": ["statement-candidate"],
+                "title": "没有组织问题的候选",
+                "topic_kind": "life_domain",
+                "status": "watching",
+                "reason": "尚未形成可直接检索的问题。",
+                "confidence": 0.5,
+            },
+        ]
+        (self.repo / ".kb" / "manifest.json").write_text(
+            json.dumps(manifest, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+    @staticmethod
+    def _result(_repo: Path, query: str) -> VectorSearchResult:
+        if query == TopicVectorSupportRequestTest.topic_query:
+            return VectorSearchResult(
+                "ready",
+                "vector cache is ready",
+                [VectorUnit(
+                    chunk_id="chunk-topic",
+                    raw_id="raw-vector-0",
+                    kind="body",
+                    text="主题证据片段" + "长" * 400,
+                    section_index=0,
+                    start=0,
+                    end=12,
+                    score=0.91,
+                )],
+                [{"raw_id": "raw-vector-0", "score": 0.91}],
+            )
+        return VectorSearchResult(
+            "ready",
+            "vector cache is ready",
+            [VectorUnit(
+                chunk_id="chunk-candidate",
+                raw_id="raw-vector-1",
+                kind="summary",
+                text="候选证据片段",
+                segment_index=0,
+                score=0.83,
+            )],
+            [{"raw_id": "raw-vector-1", "score": 0.83}],
+        )
+
+    def _add_bounded_query_sources(self) -> None:
+        frontmatter.write_document(
+            self.repo / "wiki" / "topics" / "topic-shared.md",
+            {
+                "id": "topic-shared",
+                "type": "topic",
+                "title": "共享组织问题主题",
+                "summary": "共享组织问题主题摘要",
+                "sources": ["raw-vector-2"],
+                "attrs": {"topic_contract": {"organizing_question": self.topic_query}},
+            },
+            "共享组织问题主题正文",
+        )
+        manifest = load_manifest(self.repo)
+        manifest["candidates"].extend([
+            {
+                "candidate_id": "candidate-shared",
+                "kind": "topic",
+                "node_ids": ["statement-candidate"],
+                "title": "共享问题候选",
+                "topic_kind": "life_domain",
+                "status": "watching",
+                "reason": "与既有主题共享组织问题。",
+                "organizing_question": self.topic_query,
+                "confidence": 0.7,
+            },
+            *[
+                {
+                    "candidate_id": f"candidate-query-{index}",
+                    "kind": "topic",
+                    "node_ids": ["statement-candidate"],
+                    "title": f"有界问题候选 {index}",
+                    "topic_kind": "life_domain",
+                    "status": "watching",
+                    "reason": "持久化问题等待更多直接证据。",
+                    "organizing_question": query,
+                    "confidence": 0.5,
+                }
+                for index, query in enumerate(self.bounded_queries)
+            ],
+        ])
+        (self.repo / ".kb" / "manifest.json").write_text(
+            json.dumps(manifest, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+    def test_ready_catalog_uses_only_persisted_queries_and_bounded_units(self) -> None:
+        with patch(
+            "second_memory.compiler.vector_status",
+            return_value=VectorCacheState("ready", "vector cache is ready"),
+        ), patch("second_memory.compiler.search_vectors", side_effect=self._result) as search:
+            consolidation = build_consolidation_request(self.repo)
+            topics = build_topic_request(self.repo)
+
+        self.assertIsNotNone(consolidation)
+        expected_queries = [self.topic_query, self.candidate_query] * 2
+        self.assertEqual(expected_queries, [call.args[1] for call in search.call_args_list])
+        self.assertEqual(
+            consolidation["context"]["vector_support_catalog"],
+            topics["context"]["vector_support_catalog"],
+        )
+        catalog = topics["context"]["vector_support_catalog"]
+        self.assertEqual({"status", "reason", "entries"}, set(catalog))
+        self.assertEqual("ready", catalog["status"])
+        self.assertEqual(2, len(catalog["entries"]))
+        topic_entry, candidate_entry = catalog["entries"]
+        self.assertEqual([{"kind": "topic", "id": "topic-existing"}], topic_entry["source_refs"])
+        self.assertEqual([{"kind": "candidate", "id": "candidate-watching"}], candidate_entry["source_refs"])
+        self.assertLessEqual(len(topic_entry["snippet"]), 300)
+        self.assertEqual(
+            {"query", "source_refs", "raw_id", "locator", "snippet", "score"},
+            set(topic_entry),
+        )
+        self.assertEqual(
+            {"chunk_id", "kind", "segment_index", "section_index", "start", "end"},
+            set(topic_entry["locator"]),
+        )
+        serialized = json.dumps(catalog, ensure_ascii=False)
+        self.assertNotIn("完整 Raw 正文", serialized)
+        self.assertNotIn('"vector":', serialized)
+
+    def test_catalog_deduplicates_queries_and_aggregates_stable_source_refs_before_query_cap(self) -> None:
+        self._add_bounded_query_sources()
+
+        def one_unit(_repo: Path, query: str) -> VectorSearchResult:
+            unit = VectorUnit(
+                chunk_id=f"chunk-{self.bounded_queries.index(query) if query in self.bounded_queries else 'shared'}",
+                raw_id="raw-vector-0",
+                kind="summary",
+                text=f"{query} 的候选证据",
+                segment_index=0,
+                score=0.8,
+            )
+            return VectorSearchResult(
+                "ready",
+                "vector cache is ready",
+                [unit],
+                [{"raw_id": unit.raw_id, "score": unit.score}],
+            )
+
+        with patch(
+            "second_memory.compiler.vector_status",
+            return_value=VectorCacheState("ready", "vector cache is ready"),
+        ), patch("second_memory.compiler.search_vectors", side_effect=one_unit) as search:
+            catalog = build_topic_request(self.repo)["context"]["vector_support_catalog"]
+
+        self.assertEqual(
+            [self.topic_query, *self.bounded_queries[:4]],
+            [call.args[1] for call in search.call_args_list],
+        )
+        shared = next(entry for entry in catalog["entries"] if entry["query"] == self.topic_query)
+        self.assertEqual(
+            [
+                {"kind": "candidate", "id": "candidate-shared"},
+                {"kind": "topic", "id": "topic-existing"},
+                {"kind": "topic", "id": "topic-shared"},
+            ],
+            shared["source_refs"],
+        )
+        self.assertEqual(5, len(catalog["entries"]))
+
+    def test_catalog_deduplicates_chunks_and_applies_global_score_order_and_entry_cap(self) -> None:
+        self._add_bounded_query_sources()
+        score_rows = {
+            self.topic_query: [("chunk-shared", 0.95), ("chunk-shared", 0.40), ("chunk-topic-2", 0.85)],
+            self.bounded_queries[0]: [("chunk-q0-0", 0.90), ("chunk-q0-1", 0.50), ("chunk-q0-2", 0.10)],
+            self.bounded_queries[1]: [
+                ("chunk-q1-0", 0.80), ("chunk-q1-1", 0.70), ("chunk-q1-2", 0.60), ("chunk-q1-3", 0.05),
+            ],
+            self.bounded_queries[2]: [
+                ("chunk-q2-0", 0.99), ("chunk-q2-1", 0.30), ("chunk-q2-2", 0.20), ("chunk-q2-3", 0.04),
+            ],
+            self.bounded_queries[3]: [("chunk-q3-0", 0.88), ("chunk-q3-1", 0.87), ("chunk-q3-2", 0.86)],
+        }
+
+        def scored_units(_repo: Path, query: str) -> VectorSearchResult:
+            units = [
+                VectorUnit(
+                    chunk_id=chunk_id,
+                    raw_id="raw-vector-0",
+                    kind="body",
+                    text=f"{chunk_id} score {score}",
+                    section_index=0,
+                    start=index,
+                    end=index + 1,
+                    score=score,
+                )
+                for index, (chunk_id, score) in enumerate(score_rows[query])
+            ]
+            return VectorSearchResult(
+                "ready",
+                "vector cache is ready",
+                units,
+                [{"raw_id": "raw-vector-0", "score": max(score for _, score in score_rows[query])}],
+            )
+
+        with patch(
+            "second_memory.compiler.vector_status",
+            return_value=VectorCacheState("ready", "vector cache is ready"),
+        ), patch("second_memory.compiler.search_vectors", side_effect=scored_units):
+            catalog = build_topic_request(self.repo)["context"]["vector_support_catalog"]
+
+        self.assertEqual(15, len(catalog["entries"]))
+        self.assertEqual(
+            [
+                "chunk-q2-0",
+                "chunk-shared",
+                "chunk-q0-0",
+                "chunk-q3-0",
+                "chunk-q3-1",
+                "chunk-q3-2",
+                "chunk-topic-2",
+                "chunk-q1-0",
+                "chunk-q1-1",
+                "chunk-q1-2",
+                "chunk-q0-1",
+                "chunk-q2-1",
+                "chunk-q2-2",
+                "chunk-q0-2",
+                "chunk-q1-3",
+            ],
+            [entry["locator"]["chunk_id"] for entry in catalog["entries"]],
+        )
+        self.assertEqual(1, sum(entry["locator"]["chunk_id"] == "chunk-shared" for entry in catalog["entries"]))
+        shared = next(entry for entry in catalog["entries"] if entry["locator"]["chunk_id"] == "chunk-shared")
+        self.assertEqual(0.95, shared["score"])
+
+    def test_non_ready_cache_is_explicit_and_does_not_block_requests(self) -> None:
+        with patch(
+            "second_memory.compiler.vector_status",
+            return_value=VectorCacheState("stale", "Raw annotation changed"),
+        ), patch("second_memory.compiler.search_vectors") as search:
+            consolidation = build_consolidation_request(self.repo)
+            topics = build_topic_request(self.repo)
+
+        search.assert_not_called()
+        expected = {
+            "status": "stale",
+            "reason": "Raw annotation changed",
+            "entries": [],
+        }
+        self.assertEqual(expected, consolidation["context"]["vector_support_catalog"])
+        self.assertEqual(expected, topics["context"]["vector_support_catalog"])
+        self.assertEqual(10, consolidation["context"]["batch_size"])
+
+    def test_no_persisted_organizing_query_returns_empty_ready_catalog(self) -> None:
+        frontmatter.write_document(
+            self.repo / "wiki" / "topics" / "topic-existing.md",
+            {
+                "id": "topic-existing",
+                "type": "topic",
+                "title": "既有主题",
+                "summary": "既有主题摘要",
+                "sources": ["raw-vector-0"],
+                "attrs": {"topic_contract": {}},
+            },
+            "既有主题正文",
+        )
+        manifest = load_manifest(self.repo)
+        manifest["candidates"] = []
+        (self.repo / ".kb" / "manifest.json").write_text(
+            json.dumps(manifest, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        with patch(
+            "second_memory.compiler.vector_status",
+            return_value=VectorCacheState("ready", "vector cache is ready"),
+        ), patch("second_memory.compiler.search_vectors") as search:
+            request = build_topic_request(self.repo)
+
+        search.assert_not_called()
+        self.assertEqual("ready", request["context"]["vector_support_catalog"]["status"])
+        self.assertEqual([], request["context"]["vector_support_catalog"]["entries"])
+        self.assertIn("no persisted organizing query", request["context"]["vector_support_catalog"]["reason"])
+
+    def test_skill_routes_new_organizing_questions_through_explicit_vector_search(self) -> None:
+        protocol = (Path(__file__).parents[1] / "SKILL.md").read_text(encoding="utf-8")
+
+        self.assertIn("second-memory vectors search", protocol)
+        self.assertIn("new organizing question", protocol)
+        self.assertIn("candidate evidence", protocol)
+        self.assertIn("TopicContract", protocol)
+
+    def test_skill_raw_annotation_requiredness_matches_compile_schema(self) -> None:
+        protocol = (Path(__file__).parents[1] / "SKILL.md").read_text(encoding="utf-8")
+
+        self.assertIn("`emotion` is optional and may be omitted", protocol)
+        for field in [
+            "`summary`",
+            "`importance`",
+            "`mentions`",
+            "`occurrences`",
+            "`claims`",
+        ]:
+            self.assertIn(field, protocol)
+        self.assertIn("Do not return vector-only segmentation fields", protocol)
+        self.assertNotIn("`body_groups` key is required", protocol)
 
 
 if __name__ == "__main__":

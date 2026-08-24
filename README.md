@@ -10,6 +10,7 @@
 - CLI 不调用 LLM，也不依赖数据库、向量库或后台服务。
 - 普通检索与 Consolidation 不发送整个 raw 归档。
 - 每次 apply 使用 session 校验和完整 staging，拒绝过期响应与半写入。
+- 原料向量召回固定使用本地 `fastembed==0.8.0` 与 `BAAI/bge-small-zh-v1.5`，只允许 CPU 的 `CPUExecutionProvider`。普通 apply、search 与 status 只读取已存在的本地模型，只有 `vectors reindex` 可以首次下载模型；模型或缓存缺失时核心链路保持可用并明确降级。
 
 ## 安装
 
@@ -86,6 +87,26 @@ second-memory search --query "职业规划" --level 1 --json
 second-memory search --query "职业规划" --level 2 --emit-request --json
 ```
 
+### 向量召回离线评测
+
+评测集使用 JSONL，每行固定包含非空 `query`、至少一个 `relevant_raw_ids`，可选的 `expected_units` 是期望召回的向量 `chunk_id` 数组：
+
+```json
+{"query":"如何改善睡眠拖延？","relevant_raw_ids":["raw-20260820-1200-0123abcd"],"expected_units":["chunk-example"]}
+```
+
+缓存必须已经 ready。评测只读取现有知识库与本地模型，不 reindex、不下载模型，也不改写 `.kb/vectors/`。相对 gold 路径以知识库根目录解析：
+
+```bash
+second-memory vectors evaluate \
+  --gold .kb/eval/vector-gold.jsonl \
+  --json
+```
+
+可使用 `--disable-headline`、`--disable-summary`、`--disable-body` 关闭对应向量单元。本次评测查询会在读取缓存 unit 后先过滤，再重新执行既有 scan、threshold 和 unit limit；过滤不会改写缓存，默认空 ablation 也不会改变线上检索排序。`expected_units` 仅在逐 query 证据中报告 `matched` 与 `missing`，不参与 Raw 相关性指标。
+
+报告分别给出 keyword、vector、union 的逐 query 排名和宏平均指标。每路 `rankings` 仅保留前 50 条审计证据，`ranking_counts` 记录完整排名数，`ranking_truncated` 标记是否截断；指标始终按未截断的完整排名计算。union 完整保留 keyword 的原顺序，再追加 vector 中尚未出现的 Raw。Recall@5 以全部 relevant Raw 为分母；MRR 取首个相关 Raw 的倒数排名；nDCG@5 使用二元相关性；noise rate 是前 5 个去重结果中的非相关比例；zero-result rate 表示空结果比例。所有指标固定舍入到 6 位小数。
+
 ### 回顾
 
 ```bash
@@ -153,6 +174,16 @@ second-memory update --emit-request --json
 4. 拉取失败、历史分叉或无法确认已位于远程 `master` 时直接返回 `code_update_failed`，不读取旧版本结论，也不修改知识库。
 
 响应中的 `code_update` 保存本次同步的前后 commit、目标 `origin/master` 与是否发生更新。单纯代码变化但 `KB_VERSION` 未变化时不会触发 rebuild。
+
+编译层版本与向量缓存版本相互独立。本次向量能力保持 `KB_VERSION=2.4.0`；向量 manifest 使用自己的全局指纹，覆盖 cache schema、embedding spec／模型哈希、维度和分块配置。全局指纹变化时只全量重建 `.kb/vectors/`；指纹一致时只补齐 `vector_raw_ids` 中缺失、损坏或输入变化的 Raw，并复用其他向量文件。`update` 返回 `vector_update_mode=noop|incremental|full`、`vector_raw_ids`、`vector_removed_raw_ids` 和 `vector_reason`，不因向量状态改变核心编译模式。
+
+自动维护在完成可能存在的 `llm_request` 后执行：
+
+```bash
+second-memory vectors reindex --json
+```
+
+该命令默认按向量更新计划增量协调；只有全局指纹不兼容或缓存不可安全复用时才全量计算。`--force` 仅用于用户显式要求的全量恢复，不用于自动更新。
 
 模式优先级固定为：
 

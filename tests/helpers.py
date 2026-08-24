@@ -8,6 +8,11 @@ from typing import Any
 from second_memory.compiler import add_raw, apply_response, build_compile_request, initialize, read_pending
 
 
+def raw_annotation_fields(summary: str) -> dict[str, Any]:
+    headline = f"这条原料围绕「{summary}」记录了用户的具体经历、判断或状态，并保留了后续编译、回顾与追溯所需的来源语义边界。"
+    return {"summary": (headline + "该摘要不延伸原料未明确说明的事实。")[:100]}
+
+
 def content(
     summary: str,
     source_ids: str | list[str],
@@ -194,7 +199,7 @@ class RepositoryTestCase(unittest.TestCase):
             state = states.get(raw_id, f"{entry['title']} 的当前状态")
             annotations.append({
                 "raw_id": raw_id,
-                "summary": state,
+                **raw_annotation_fields(state),
                 "importance": 3,
                 "emotion": "平静",
                 "mentions": [],
