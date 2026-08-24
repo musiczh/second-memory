@@ -10,7 +10,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 from second_memory import frontmatter
-from second_memory.chunking import annotation_hash
 from second_memory.compiler import (
     DEFAULT_GITIGNORE,
     add_raw,
@@ -23,8 +22,10 @@ from second_memory.compiler import (
 from second_memory.config import load_config, write_config
 from second_memory.embedding import EmbeddingError, EmbeddingSpec
 from second_memory.vectors import (
+    VECTOR_CACHE_SCHEMA,
     VectorCacheError,
     build_vector_units,
+    plan_vector_update,
     reindex_vectors,
     resolve_vector_unit_text,
     search_vectors,
@@ -38,7 +39,7 @@ def embedding(score: float = 1.0) -> list[float]:
 
 
 class FakeProvider:
-    def __init__(self, scores: dict[str, float] | None = None) -> None:
+    def __init__(self, scores: dict[str, float] | None = None, *, model_seed: bytes = b"fake-onnx-model") -> None:
         self._spec = EmbeddingSpec(
             provider="fastembed",
             model="BAAI/bge-small-zh-v1.5",
@@ -46,7 +47,7 @@ class FakeProvider:
             dtype="float32",
             normalization="l2",
             runtime="onnxruntime-cpu",
-            model_hash=hashlib.sha256(b"fake-onnx-model").hexdigest(),
+            model_hash=hashlib.sha256(model_seed).hexdigest(),
         )
         self.scores = scores or {}
         self.passage_inputs: list[list[str]] = []
@@ -78,7 +79,6 @@ class VectorRepositoryTest(unittest.TestCase):
         self,
         raws: list[tuple[str, str]],
         *,
-        body_groups: dict[str, list[list[str]]] | None = None,
         duplicate_summary: bool = False,
     ) -> list[str]:
         raw_ids = [str(add_raw(self.repo, title, body, "2026-08-20", ["test"])["raw_id"]) for title, body in raws]
@@ -88,12 +88,10 @@ class VectorRepositoryTest(unittest.TestCase):
             label = str(entry["title"])
             fields = raw_annotation_fields(label)
             if duplicate_summary:
-                fields["summary_segments"] = [fields["summary"]]
+                fields["summary"] = label
             annotations.append({
                 "raw_id": entry["id"],
                 "summary": fields["summary"],
-                "summary_segments": fields["summary_segments"],
-                "body_groups": (body_groups or {}).get(str(entry["id"]), []),
                 "importance": 3,
                 "emotion": "",
                 "mentions": [],
@@ -118,35 +116,6 @@ class VectorRepositoryTest(unittest.TestCase):
 
         return raw_lookup(self.repo)[raw_id]
 
-    def compile_sectioned_raw(self, tail_length: int) -> str:
-        body = "甲" * 600 + "乙" * tail_length
-        raw_id = str(add_raw(self.repo, "分段长原料", body, "2026-08-20", ["test"])["raw_id"])
-        request = build_compile_request(self.repo, mode="incremental")
-        entry = request["context"]["raw_entries"][0]
-        atom_ids = [atom["id"] for atom in entry["body_atoms"]]
-        fields = raw_annotation_fields(str(entry["title"]))
-        plan = {
-            "schema_version": 2,
-            "session_id": request["context"]["session_id"],
-            "mode": "incremental",
-            "raw_annotations": [{
-                "raw_id": raw_id,
-                **fields,
-                "body_groups": [atom_ids[:2], atom_ids[2:]],
-                "importance": 3,
-                "emotion": "",
-                "mentions": [],
-                "occurrences": [],
-                "claims": [],
-            }],
-            "node_actions": [],
-            "out_edges": [],
-            "candidates": [],
-            "consolidation_memo": request["context"]["consolidation_memo"],
-        }
-        apply_response(self.repo, plan, command="compile")
-        return raw_id
-
     def rewrite_cached_rows(self, raw_id: str, mutate) -> None:
         manifest_path = self.repo / ".kb/vectors/manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -168,33 +137,9 @@ class VectorRepositoryTest(unittest.TestCase):
         mutate(manifest)
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
 
-    def test_units_are_stable_locators_and_body_chunks_never_cross_sections(self) -> None:
+    def test_units_are_stable_locators_derived_without_vector_compile_annotations(self) -> None:
         body = "甲" * 600 + "乙" * 50
-        raw_id = str(add_raw(self.repo, "分段长原料", body, "2026-08-20", ["test"])["raw_id"])
-        request = build_compile_request(self.repo, mode="incremental")
-        atom_ids = [atom["id"] for atom in request["context"]["raw_entries"][0]["body_atoms"]]
-        label = "分段长原料"
-        plan = {
-            "schema_version": 2,
-            "session_id": request["context"]["session_id"],
-            "mode": "incremental",
-            "raw_annotations": [{
-                "raw_id": raw_id,
-                "summary": (f"这条原料围绕「{label}」记录用户的事实与判断，并保留向量召回、后续编译、周期回顾和来源追溯所需的清晰语义边界。" + "补充说明。")[:100],
-                "summary_segments": [f"原料以「{label}」为核心，说明用户当时经历的具体事实和形成的判断，并保留与向量召回、知识编译、周期回顾及来源追溯有关的完整语义信息。"],
-                "body_groups": [atom_ids[:2], atom_ids[2:]],
-                "importance": 3,
-                "emotion": "",
-                "mentions": [],
-                "occurrences": [],
-                "claims": [],
-            }],
-            "node_actions": [],
-            "out_edges": [],
-            "candidates": [],
-            "consolidation_memo": request["context"]["consolidation_memo"],
-        }
-        apply_response(self.repo, plan, command="compile")
+        raw_id = self.compile_raws([("分段长原料", body)])[0]
         entry = self.raw_entry(raw_id)
 
         first = build_vector_units(entry, load_config(self.repo))
@@ -203,10 +148,11 @@ class VectorRepositoryTest(unittest.TestCase):
         self.assertEqual([unit.chunk_id for unit in first], [unit.chunk_id for unit in second])
         self.assertEqual(["headline", "summary"], [unit.kind for unit in first[:2]])
         self.assertEqual(0, first[1].segment_index)
+        self.assertNotIn("summary_segments", entry.annotations)
+        self.assertNotIn("body_sections", entry.annotations)
         body_units = [unit for unit in first if unit.kind == "body"]
-        self.assertEqual([(0, 300), (255, 555), (510, 600), (600, len(entry.body))], [(unit.start, unit.end) for unit in body_units])
+        self.assertEqual([(0, 300), (255, 555), (510, len(entry.body))], [(unit.start, unit.end) for unit in body_units])
         self.assertTrue(all(50 <= len(unit.text) <= 300 for unit in body_units))
-        self.assertTrue(all(not (unit.start < 600 < unit.end) for unit in body_units))
         self.assertEqual([unit.text for unit in first], [resolve_vector_unit_text(entry, unit) for unit in first])
 
     def test_short_raw_body_is_the_only_body_chunk_below_the_minimum(self) -> None:
@@ -217,15 +163,6 @@ class VectorRepositoryTest(unittest.TestCase):
         body_units = [unit for unit in units if unit.kind == "body"]
         self.assertEqual([self.raw_entry(raw_id).body], [unit.text for unit in body_units])
 
-    def test_non_short_raw_rejects_a_persisted_section_below_the_minimum(self) -> None:
-        raw_id = self.compile_sectioned_raw(20)
-
-        with self.assertRaisesRegex(VectorCacheError, "section.*minimum"):
-            build_vector_units(self.raw_entry(raw_id), load_config(self.repo))
-        with self.assertRaisesRegex(VectorCacheError, "section.*minimum"):
-            reindex_vectors(self.repo, FakeProvider())
-        self.assertFalse((self.repo / ".kb/vectors").exists())
-
     def test_reindex_writes_text_free_jsonl_and_a_complete_fingerprinted_manifest(self) -> None:
         raw_id = self.compile_raws([("缓存结构", "甲" * 80 + "。" + "乙" * 80 + "。")])[0]
         provider = FakeProvider()
@@ -234,19 +171,20 @@ class VectorRepositoryTest(unittest.TestCase):
 
         self.assertEqual("ready", state.status)
         manifest = json.loads((self.repo / ".kb/vectors/manifest.json").read_text(encoding="utf-8"))
-        self.assertEqual(1, manifest["schema"])
+        self.assertEqual(VECTOR_CACHE_SCHEMA, manifest["schema"])
         self.assertEqual("fastembed", manifest["provider"])
         self.assertEqual("BAAI/bge-small-zh-v1.5", manifest["model"])
         self.assertEqual(provider.spec.model_hash, manifest["model_hash"])
         self.assertEqual(64, len(manifest["spec_fingerprint"]))
         self.assertEqual(64, len(manifest["config_fingerprint"]))
+        self.assertEqual(64, len(manifest["global_fingerprint"]))
         self.assertEqual(64, len(manifest["input_fingerprint"]))
         self.assertEqual(1, manifest["raw_count"])
         self.assertEqual(sum(item["unit_count"] for item in manifest["raws"].values()), manifest["unit_count"])
         raw_info = manifest["raws"][raw_id]
         self.assertEqual({
             "schema", "provider", "model", "model_hash", "dimension", "spec",
-            "spec_fingerprint", "config_fingerprint", "input_fingerprint",
+            "spec_fingerprint", "config_fingerprint", "global_fingerprint", "input_fingerprint",
             "raw_count", "unit_count", "raws",
         }, set(manifest))
         self.assertEqual({
@@ -430,16 +368,16 @@ class VectorRepositoryTest(unittest.TestCase):
         self.assertEqual([], result.units)
         self.assertEqual([], result.raws)
 
-    def test_status_rejects_body_locator_that_crosses_a_persisted_section(self) -> None:
-        raw_id = self.compile_sectioned_raw(50)
+    def test_status_rejects_body_locator_that_differs_from_deterministic_chunking(self) -> None:
+        raw_id = self.compile_raws([("定位校验", "甲" * 600 + "乙" * 50)])[0]
         provider = FakeProvider()
         reindex_vectors(self.repo, provider)
 
-        def cross_section(rows: list[dict[str, object]]) -> None:
-            unit = next(row for row in rows if row.get("kind") == "body" and row.get("end") == 600)
-            unit["end"] = 610
+        def alter_locator(rows: list[dict[str, object]]) -> None:
+            unit = next(row for row in rows if row.get("kind") == "body")
+            unit["end"] = int(unit["end"]) - 1
 
-        self.rewrite_cached_rows(raw_id, cross_section)
+        self.rewrite_cached_rows(raw_id, alter_locator)
 
         self.assertEqual("corrupt", vector_status(self.repo).status)
         result = search_vectors(self.repo, "查询", provider)
@@ -740,24 +678,90 @@ class VectorRepositoryTest(unittest.TestCase):
         self.assertEqual(unchanged_bytes, (destination / unchanged_file).read_bytes())
         self.assertEqual("ready", vector_status(self.repo, destination=destination).status)
 
-    def test_main_manifest_records_annotation_hash_and_reports_drift_kind(self) -> None:
+    def test_destination_delta_never_reuses_cache_with_an_invalid_global_fingerprint(self) -> None:
+        raw_ids = self.compile_raws([("版本甲", "版本甲正文" * 12), ("版本乙", "版本乙正文" * 12)])
+        reindex_vectors(self.repo, FakeProvider())
+        manifest_path = self.repo / ".kb/vectors/manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["global_fingerprint"] = "0" * 64
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+
+        with self.assertRaisesRegex(VectorCacheError, "cannot build a complete destination cache"):
+            reindex_vectors(
+                self.repo,
+                FakeProvider(),
+                raw_ids=[raw_ids[0]],
+                destination=self.repo / ".kb/transaction/vectors.next",
+            )
+
+    def test_default_reindex_only_embeds_raws_missing_from_compatible_cache(self) -> None:
+        first_raw = self.compile_raws([("增量补齐甲", "增量补齐甲正文" * 12)])[0]
+        reindex_vectors(self.repo, FakeProvider())
+        with patch("second_memory.compiler.reindex_vectors", side_effect=VectorCacheError("defer delta")):
+            second_raw = self.compile_raws([("增量补齐乙", "增量补齐乙正文" * 12)])[0]
+        provider = FakeProvider()
+
+        plan = plan_vector_update(self.repo, provider=provider)
+        state = reindex_vectors(self.repo, provider)
+
+        self.assertEqual("incremental", plan.mode)
+        self.assertEqual([second_raw], plan.raw_ids)
+        self.assertEqual("ready", state.status)
+        self.assertEqual(1, len(provider.passage_inputs))
+        embedded = provider.passage_inputs[0]
+        self.assertTrue(embedded)
+        self.assertTrue(all("增量补齐甲" not in text for text in embedded))
+        self.assertTrue(any("增量补齐乙" in text for text in embedded))
+        self.assertEqual({first_raw, second_raw}, set(state.manifest["raws"]))
+
+    def test_embedding_fingerprint_change_requires_full_reindex(self) -> None:
+        raw_ids = self.compile_raws([
+            ("模型变化甲", "模型变化甲正文" * 12),
+            ("模型变化乙", "模型变化乙正文" * 12),
+        ])
+        reindex_vectors(self.repo, FakeProvider())
+        provider = FakeProvider(model_seed=b"replacement-model")
+
+        plan = plan_vector_update(self.repo, provider=provider)
+        state = reindex_vectors(self.repo, provider)
+
+        self.assertEqual("full", plan.mode)
+        self.assertEqual(sorted(raw_ids), plan.raw_ids)
+        self.assertEqual("ready", state.status)
+        self.assertEqual(1, len(provider.passage_inputs))
+        self.assertTrue(any("模型变化甲" in text for text in provider.passage_inputs[0]))
+        self.assertTrue(any("模型变化乙" in text for text in provider.passage_inputs[0]))
+
+    def test_force_reindex_reembeds_all_raws_without_global_fingerprint_change(self) -> None:
+        self.compile_raws([
+            ("强制重建甲", "强制重建甲正文" * 12),
+            ("强制重建乙", "强制重建乙正文" * 12),
+        ])
+        reindex_vectors(self.repo, FakeProvider())
+        provider = FakeProvider()
+
+        state = reindex_vectors(self.repo, provider, force=True)
+
+        self.assertEqual("ready", state.status)
+        self.assertEqual(1, len(provider.passage_inputs))
+        self.assertTrue(any("强制重建甲" in text for text in provider.passage_inputs[0]))
+        self.assertTrue(any("强制重建乙" in text for text in provider.passage_inputs[0]))
+
+    def test_summary_change_only_invalidates_its_vector_entry_not_the_compile_layer(self) -> None:
         raw_id = self.compile_raws([("主清单", "主清单正文" * 10)])[0]
         entry = self.raw_entry(raw_id)
         info = load_manifest(self.repo)["raw_hashes"][raw_id]
-
-        expected = annotation_hash(
-            entry.title,
-            str(entry.annotations["summary"]),
-            entry.annotations["summary_segments"],
-            entry.annotations["body_sections"],
-        )
-        self.assertEqual(expected, info["annotation_hash"])
+        self.assertEqual({"path", "body_hash"}, set(info))
+        reindex_vectors(self.repo, FakeProvider())
         raw_path = entry.path
         os.chmod(raw_path, 0o644)
         meta, body = frontmatter.read_document(raw_path)
         meta["summary"] = str(meta["summary"])[:-1] + "改"
         raw_path.write_text(frontmatter.dump_document(meta, body), encoding="utf-8")
-        self.assertEqual([f"raw:{raw_id}:annotation"], manifest_drift(self.repo))
+        self.assertEqual([], manifest_drift(self.repo))
+        vector_plan = plan_vector_update(self.repo, provider=FakeProvider())
+        self.assertEqual("incremental", vector_plan.mode)
+        self.assertEqual([raw_id], vector_plan.raw_ids)
 
         raw_path.write_text(frontmatter.dump_document({**meta, "summary": entry.annotations["summary"]}, body + "新增"), encoding="utf-8")
         self.assertEqual([f"raw:{raw_id}:body"], manifest_drift(self.repo))

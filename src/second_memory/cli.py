@@ -292,13 +292,14 @@ def search(
 @vectors_app.command("reindex")
 def vectors_reindex(
     offline: bool = typer.Option(False, "--offline", help="Only use an already cached local model."),
+    force: bool = typer.Option(False, "--force", help="Re-embed every compiled Raw even when the global fingerprint is unchanged."),
     repo: Optional[str] = typer.Option(None, "--repo"),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     command = "vectors reindex"
     try:
         target = resolve_repo(repo)
-        state = reindex_vectors(target, offline=offline)
+        state = reindex_vectors(target, offline=offline, force=force)
         emit(command, _vector_state_payload(target, state), json_output=True)
     except Exception as exc:
         fail(command, exc, json_output=True)

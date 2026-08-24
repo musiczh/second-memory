@@ -144,10 +144,10 @@ class VectorConfigurationTest(unittest.TestCase):
         "vector_chunk_overlap": 0.15,
     }
 
-    def test_default_config_contains_the_v25_vector_defaults(self) -> None:
+    def test_vector_defaults_do_not_change_the_v24_compile_version(self) -> None:
         config = default_config(Path("/tmp/knowledge-base"), "shared", None, "plain")
 
-        self.assertEqual("2.5.0", KB_VERSION)
+        self.assertEqual("2.4.0", KB_VERSION)
         self.assertEqual(self.vector_defaults, {key: config[key] for key in self.vector_defaults})
 
     def test_loading_an_old_config_adds_missing_vector_defaults_without_overriding_user_values(self) -> None:

@@ -648,12 +648,10 @@ class IncrementalVectorApplyTest(VectorTestRepository):
         self.assertIn("inference exploded", result["vector_reason"])
         self.assertFalse((self.repo / ".kb/transaction").exists())
 
-    def test_vector_cache_error_from_short_section_degrades_apply(self) -> None:
+    def test_short_body_tail_vectorizes_without_compile_section_metadata(self) -> None:
         body = "甲" * 600 + "乙" * 20
         raw_id = str(add_raw(self.repo, "短语义分段", body, "2026-08-20", ["test"])["raw_id"])
         request = build_compile_request(self.repo, mode="incremental")
-        raw = request["context"]["raw_entries"][0]
-        atom_ids = [atom["id"] for atom in raw["body_atoms"]]
         plan = {
             "schema_version": 2,
             "session_id": request["context"]["session_id"],
@@ -661,7 +659,6 @@ class IncrementalVectorApplyTest(VectorTestRepository):
             "raw_annotations": [{
                 "raw_id": raw_id,
                 **raw_annotation_fields("短语义分段"),
-                "body_groups": [atom_ids[:2], atom_ids[2:]],
                 "importance": 3,
                 "emotion": "",
                 "mentions": [],
@@ -678,8 +675,7 @@ class IncrementalVectorApplyTest(VectorTestRepository):
             result = apply_response(self.repo, plan, command="compile")
 
         self.assertIn(raw_id, load_manifest(self.repo)["compiled_raw"])
-        self.assertEqual("pending", result["vector_status"])
-        self.assertIn("shorter than the vector chunk minimum", result["vector_reason"])
+        self.assertEqual("ready", result["vector_status"])
 
     def test_destination_staging_failure_does_not_rollback_core_apply(self) -> None:
         raw_id, plan = self.add_plan("缓存落盘失败", "缓存落盘失败时仍保留核心编译结果" * 20)

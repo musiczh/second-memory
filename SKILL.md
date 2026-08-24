@@ -59,9 +59,9 @@ printf '%s' "$TEXT" | second-memory add \
 second-memory compile --emit-request --json
 ```
 
-Read `data.llm_request`. Return one V2.5 contract `CompilePlan v2` matching its schema:
+Read `data.llm_request`. Return one V2.4 contract `CompilePlan v2` matching its schema:
 
-- Every Raw annotation response must include `summary`, `summary_segments`, `importance`, `mentions`, `occurrences`, `claims`, and `body_groups`. Use a 60–100 character headline `summary` and one or more ordered 50–300 character `summary_segments`（short Raw exception applies）. The `body_groups` key is required and may be `[]`; an empty array asks the CLI to apply its deterministic grouping fallback, while a non-empty array must cover every requested `body_atom`. The `emotion` is optional and may be omitted. Empty annotation channels are valid only when no action of the corresponding entity/event/statement type cites that Raw.
+- Every Raw annotation response must include `summary`, `importance`, `mentions`, `occurrences`, and `claims`. The `emotion` is optional and may be omitted. Empty annotation channels are valid only when no action of the corresponding entity/event/statement type cites that Raw. Do not return vector-only segmentation fields: the vector cache independently derives units from the Raw title, compiled summary, and deterministic Raw body chunks.
 - Returning zero node actions and zero `belongs_to` edges is valid when all three channels are empty. Prefer that outcome over promoting a routine chat, routine reading trigger, momentary state, or generic observation into a durable node.
 - Reuse an existing node with `target_id` when the resolver context identifies it.
 - Use a plan-local `ref` for a new node. The CLI owns final IDs and paths.
@@ -271,6 +271,14 @@ The returned mode is authoritative:
 - `incremental`: uncompiled raw entries must be consumed.
 - `consolidate`: at least ten compiled raw entries are waiting for consolidation.
 - `noop`: nothing needs to change.
+
+The compiled-layer mode and `data.vector_update_mode` are independent. Finish any returned `llm_request` first, then inspect vector maintenance:
+
+- `full`: run `second-memory vectors reindex --json`; a cache schema, embedding spec, model hash, dimension, or chunk configuration fingerprint changed, or no reusable cache exists.
+- `incremental`: run `second-memory vectors reindex --json`; the command must embed only `data.vector_raw_ids`, reuse every compatible Raw vector file, remove `data.vector_removed_raw_ids`, and atomically replace the complete cache manifest.
+- `noop`: do not reindex.
+
+Never use `--force` during automatic maintenance. It is an explicit user recovery command that intentionally re-embeds every compiled Raw even when the global fingerprint is unchanged. Vector maintenance must never change `KB_VERSION`, raw annotations, compiled nodes, Wiki pages, or trigger a raw-only rebuild.
 
 When `llm_request` is present, produce its exact `CompilePlan v2` and apply it without changing `mode` or `session_id`:
 

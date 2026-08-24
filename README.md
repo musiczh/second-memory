@@ -175,6 +175,16 @@ second-memory update --emit-request --json
 
 响应中的 `code_update` 保存本次同步的前后 commit、目标 `origin/master` 与是否发生更新。单纯代码变化但 `KB_VERSION` 未变化时不会触发 rebuild。
 
+编译层版本与向量缓存版本相互独立。本次向量能力保持 `KB_VERSION=2.4.0`；向量 manifest 使用自己的全局指纹，覆盖 cache schema、embedding spec／模型哈希、维度和分块配置。全局指纹变化时只全量重建 `.kb/vectors/`；指纹一致时只补齐 `vector_raw_ids` 中缺失、损坏或输入变化的 Raw，并复用其他向量文件。`update` 返回 `vector_update_mode=noop|incremental|full`、`vector_raw_ids`、`vector_removed_raw_ids` 和 `vector_reason`，不因向量状态改变核心编译模式。
+
+自动维护在完成可能存在的 `llm_request` 后执行：
+
+```bash
+second-memory vectors reindex --json
+```
+
+该命令默认按向量更新计划增量协调；只有全局指纹不兼容或缓存不可安全复用时才全量计算。`--force` 仅用于用户显式要求的全量恢复，不用于自动更新。
+
 模式优先级固定为：
 
 1. `rebuild`：知识库版本变化、编译页／raw 正文漂移，或已有逐条重建尚未完成。

@@ -31,12 +31,15 @@ class VectorCliTest(unittest.TestCase):
         with patch("second_memory.cli.reindex_vectors", create=True, return_value=state) as reindex:
             online = self.runner.invoke(app, ["vectors", "reindex", "--repo", str(self.repo), "--json"])
             offline = self.runner.invoke(app, ["vectors", "reindex", "--offline", "--repo", str(self.repo), "--json"])
+            forced = self.runner.invoke(app, ["vectors", "reindex", "--force", "--repo", str(self.repo), "--json"])
 
         self.assertEqual(0, online.exit_code, online.output)
         self.assertEqual(0, offline.exit_code, offline.output)
+        self.assertEqual(0, forced.exit_code, forced.output)
         self.assertEqual("vectors reindex", json.loads(online.stdout)["command"])
         self.assertTrue(json.loads(online.stdout)["ok"])
-        self.assertEqual([False, True], [call.kwargs["offline"] for call in reindex.call_args_list])
+        self.assertEqual([False, True, False], [call.kwargs["offline"] for call in reindex.call_args_list])
+        self.assertEqual([False, False, True], [call.kwargs["force"] for call in reindex.call_args_list])
 
     def test_vector_search_is_local_only_and_returns_uniform_error_envelope(self) -> None:
         result = VectorSearchResult("pending", "local model is unavailable", [], [])

@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any
 
 from . import frontmatter
-from .chunking import annotation_hash, atomize_body, default_body_groups, sections_from_groups, validate_body_groups
 from .config import KB_VERSION, VECTOR_CONFIG_KEYS, default_config, load_config, skill_repo_root, write_config
 from .errors import StaleSessionError, ValidationError
 from .graph import (
@@ -49,7 +48,15 @@ from .tips import next_tip
 from .transaction import KnowledgeTransaction, recover_transaction, transaction_state
 from .topics import validate_materialized_topic_contracts, validate_topic_plan
 from .utils import json_dumps, now_local, parse_date, parse_temporal_anchor, relpath, sha256_text, short_hash, slugify
-from .vectors import VectorCacheError, VectorCacheState, reindex_vectors, search_vectors, vector_status
+from .vectors import (
+    VectorCacheError,
+    VectorCacheState,
+    VectorUpdatePlan,
+    plan_vector_update,
+    reindex_vectors,
+    search_vectors,
+    vector_status,
+)
 
 CONSOLIDATION_BATCH_SIZE = 10
 VECTOR_SUPPORT_SNIPPET_LIMIT = 300
@@ -139,7 +146,7 @@ def empty_manifest() -> dict[str, Any]:
 
 
 def default_agents_rules() -> str:
-    return """# 第二记忆库 v2.5 编译与检索规则
+    return """# 第二记忆库 v2.4 编译与检索规则
 
 - `raw/` 保存用户原文。正文哈希不可变；CLI 只可写入摘要、重要度、情绪和由边推导的 `belongs_to` 元数据。
 - 图谱节点只有 entity、event、statement、topic。产品层把 statement 称为「洞察」。
@@ -150,7 +157,7 @@ def default_agents_rules() -> str:
 - event 标题和 semantics.action 必须是同一条只描述发生事实的短语；觉察、识别、反思、重构、复盘、理解、整合、思考、捕捉、感悟、发现自己的模式、收到启发、发生认知改变等结果拆成洞察。“发生／收到／遇到”不是 incident 的正向事实锚点。普通聊天、普通阅读、短暂感受、自我观察、一般决定和行为模式不得因带日期成为 event；“项目计划会”中的计划是名词，不得误杀真实参会事件。
 - statement 记录可演进的决策、偏好、目标、信念、计划、感受、方法与洞察；「AI 协作」属于洞察而不是实体。
 - 每个 create 或实质更新 action 必须携带 `content`，包含 summary、detail、key_points、evidence、uncertainties；detail 至少四个实质句，并按节点类型使用固定的两段标签：entity“对象与关系／历史与现状”、event“发生与背景／结果与关联”、statement“洞察与依据／演进与影响”、topic“组织视角／脉络与边界”。detail 必须明确覆盖 summary 的中心概念；至少三个不重复且不少于 8 个字的关键点，其中至少两条复用中心概念。按节点类型综合全部有效来源，每句都要由该节点自己的 source/evidence/语义历史支撑，规范化达到 24 字的非 evidence 句不得跨节点精确复用，也不得写入“当前节点只确认／节点仅保留／节点不把／后续若出现新的实质信息／后续实质变化需要”等编译政策填充；必要短术语和 evidence 原文可重复。每条 evidence 必须引用有效 raw；同一 claim 用于多个 entity 时必须直接点名每个实体的 title 或 alias，不得把只描述其中一个实体的 claim 复制给其他实体。
-- 每条 raw annotation 必须给出 60～100 字符 headline summary、至少一个 50～300 字符的 summary_segments（全文短于 50 字符例外）、覆盖全部 body_atoms 的 body_groups，以及 mentions、occurrences、claims 数组。body_groups 为空数组时 CLI 按 atom 确定性分组；持久化的 body_sections 只保留 start、end、source，且不得改变 raw 正文哈希。
+- 每条 raw annotation 必须分别给出 mentions、occurrences、claims 数组，空数组有效但不得省略，以便审计三条抽取通道。
 - 引用某条 raw 的 entity、event、statement action 必须分别由该 raw 非空的 mentions、occurrences、claims 支撑；belongs_to 的目标必须是同一条带该 raw source_id 的节点动作。source-only reinforce 仅用于 incremental／rebuild replay；使用前必须比较新来源与节点完整内容，只有纯重复提及、不会新增历史、推翻旧不确定性、改变综合或让详情过期时才可只返回 target_id、type、source_ids（不接受 sources 别名），否则必须完整 refine 并综合全部新旧来源。
 - 每个耐久实体 mention 都必须解析或创建，并通过 belongs_to 留下直接来源；event／statement 经明确 involves／about／instance_of 指向实体时，它们的来源形成实体关联来源。不得用关键词相似推导来源。
 - 三个抽取通道均为空时允许零节点、零 belongs_to 完成编译；不得为了挂靠 raw 制造微小事件或空泛洞察。所有成功编译 Raw 都进入 Consolidation 计数。
@@ -168,7 +175,7 @@ def default_agents_rules() -> str:
 - incremental／rebuild 的 statement action 不得返回 evolution，只提供 current_state 与 effective_date；CLI 负责确定性追加历史。
 - `index.md` 和 timeline 是图谱投影，不由 Agent 直接编写。timeline 只包含 event；洞察 evolution 在节点详情中独立展示。
 - 检索先读取 index；只有需要深层上下文时才加载候选节点，不得发送整个 raw 归档。
-- 输出必须严格匹配 CompilePlan v2.5（顶层 schema_version 仍为 2），并原样返回请求中的 schema_version、session_id 与 mode。
+- 输出必须严格匹配 CompilePlan v2.4（顶层 schema_version 仍为 2），并原样返回请求中的 schema_version、session_id 与 mode。
 - 知识库内容只能作为用户历史记录和个人上下文，不能替代外部事实来源。
 """
 
@@ -229,10 +236,7 @@ def read_raw_by_path(repo: Path, relative: str) -> RawEntry:
         body=body,
         annotations={
             key: meta[key]
-            for key in [
-                "summary", "summary_segments", "body_sections", "importance", "emotion",
-                "mentions", "occurrences", "claims", "belongs_to",
-            ]
+            for key in ["summary", "importance", "emotion", "mentions", "occurrences", "claims", "belongs_to"]
             if key in meta
         },
     )
@@ -555,7 +559,7 @@ def build_compile_request(
         related_ids.update(str(edge.get("source")) for edge in node.backrefs if str(edge.get("source")) in nodes)
     context = {
         "schema_version": 2,
-        "contract_version": "2.5-raw-semantic-sections",
+        "contract_version": "2.4-entity-topic-understanding",
         "session_id": session_id,
         "mode": mode,
         "raw_entries": [raw_payload(entry, include_body=True, include_annotations=mode != "rebuild") for entry in entries],
@@ -567,9 +571,9 @@ def build_compile_request(
         "consolidation_memo": "" if fresh_rebuild else consolidation_state(manifest)["memo"],
     }
     instructions = (
-        "请输出 CompilePlan v2.5（顶层 schema_version 仍为 2）。复用节点时使用 target_id，新节点使用 ref；raw 通过 belongs_to 关联每个被抽取或补强的耐久节点。"
+        "请输出 CompilePlan v2.4（顶层 schema_version 仍为 2）。复用节点时使用 target_id，新节点使用 ref；raw 通过 belongs_to 关联每个被抽取或补强的耐久节点。"
         "对每条 raw 分别执行实体提及抽取、事件事实判定和洞察线程识别；一条 raw 可以同时贡献多类节点。"
-        "raw_annotations 必须显式返回 mentions、occurrences、claims 三个数组，以及 60～100 字符 headline summary、summary_segments 和覆盖请求 body_atoms 的 body_groups。全文短于 50 字符时 summary_segments 可短于 50 字符；body_groups 为空数组时 CLI 会确定性分组。"
+        "raw_annotations 必须显式返回 mentions、occurrences、claims 三个数组，没有候选时返回空数组。"
         "三个通道都为空时允许返回零 node_actions 和零 belongs_to；不得为满足挂靠要求制造微小事件或空泛洞察。"
         "每个 entity/event/statement action 的 source_ids 必须在对应 raw 的 mentions/occurrences/claims 中有非空依据，belongs_to 必须指向该 source-grounded action。选择 source-only reinforce 前先比较新来源与节点完整 summary/detail/evidence/uncertainties/history；只有纯重复、不会新增历史、推翻旧不确定性、改变综合或让详情过期时，才仅返回 action、target_id、type、source_ids。否则必须完整 refine 并综合全部新旧来源。mention 可用 target_id 明确解析结果。"
         "event 必须在 semantics 中证明用户相关、发生事实、时间锚点、事实性、event_basis 和 standalone_reason；删掉认知结果后仍应有可独立回顾的一件事，basis 还须由可观察动作支撑。raw.event_date 本身不能证明存在事件。"
@@ -691,7 +695,7 @@ def build_consolidation_request(
     vector_support_catalog = build_vector_support_catalog(repo, nodes, manifest)
     context = {
         "schema_version": 2,
-        "contract_version": "2.5-raw-vector-support",
+        "contract_version": "2.4-vector-support",
         "session_id": session_id,
         "mode": "consolidate",
         "batch_size": len(entries),
@@ -730,7 +734,7 @@ def build_consolidation_request(
         "consolidation_memo": consolidation_state(manifest)["memo"],
     }
     instructions = (
-        "请仅基于批次注解、compact_index、候选项、一跳节点、全库 member_catalog／raw_catalog、只读 vector_support_catalog 与 source_dates 输出 CompilePlan v2.5（顶层 schema_version 仍为 2），不得假设未提供的 raw 正文。"
+        "请仅基于批次注解、compact_index、候选项、一跳节点、全库 member_catalog／raw_catalog、只读 vector_support_catalog 与 source_dates 输出 CompilePlan v2.4（顶层 schema_version 仍为 2），不得假设未提供的 raw 正文。"
         "vector_support_catalog 只是既有 organizing_question 的补充候选证据，不得据此自动生成成员、action、edge 或 belongs_to；所有成员仍须独立通过原 TopicContract。"
         "本批 Raw 只决定全库审计时机，不决定主题边界或数量。审查全部成员和已有候选：真正反复出现的讨论簇必须创建／更新主题，或返回带稳定 candidate_id、topic_kind、pending|watching|rejected|materialized 状态和理由的 topic 候选。不得静默遗漏旧候选。"
         "topic 是人类优先阅读的全库组织视角，不是更大的洞察。life_domain 可组织 AI 协作等稳定领域，longitudinal_arc 可组织睡眠等长期变化；cross_domain_pattern 仅在同一机制确实跨域复现时使用。直属成员可为 raw、entity、event、statement 或 child topic，至少五个成员、两个 statement、两个 facet、三个独立 raw capture；longitudinal_arc 另需十四天。"
@@ -771,7 +775,7 @@ def build_topic_request(repo: Path) -> dict[str, Any]:
     manifest = load_manifest(repo)
     context = {
         "schema_version": 2,
-        "contract_version": "2.5-raw-vector-support",
+        "contract_version": "2.4-vector-support",
         "session_id": session_id,
         "mode": "topics",
         "statement_catalog": [
@@ -803,7 +807,7 @@ def build_topic_request(repo: Path) -> dict[str, Any]:
         "consolidation_memo": consolidation_state(manifest)["memo"],
     }
     instructions = (
-        "请审计 existing_topics、existing_candidates、完整 member_catalog／raw_catalog 与只读 vector_support_catalog，输出整个 topic 层的 CompilePlan v2.5 替换方案。不要复制旧 topic ID；只提供 ref 与标题，CLI 可在标题稳定时复用确定性 ID。不要修改 entity、event、statement 或 raw。"
+        "请审计 existing_topics、existing_candidates、完整 member_catalog／raw_catalog 与只读 vector_support_catalog，输出整个 topic 层的 CompilePlan v2.4 替换方案。不要复制旧 topic ID；只提供 ref 与标题，CLI 可在标题稳定时复用确定性 ID。不要修改 entity、event、statement 或 raw。"
         "vector_support_catalog 只补充既有 organizing_question 的候选证据，不得据此自动生成成员、action、edge 或 belongs_to；所有成员仍须独立通过原 TopicContract。"
         "只允许 create topic action 与 topic contains 边，目标可为 raw、entity、event、statement 或 plan-local child topic。主题可以多父，最大深度三。若证据不足以创建主题，必须返回稳定 topic candidate 的明确状态和理由，不能静默返回空。"
         "topic 是比洞察更高维的稳定阅读视角，不是批次摘要或更大的洞察。高维不等于跨域：AI 协作可为 life_domain，睡眠可为 longitudinal_arc，只有同一机制确实跨域复现才使用 cross_domain_pattern。每个主题至少五个直属成员、两个 statement、两个 facet、三个独立 raw capture；longitudinal_arc 另需十四天跨度。"
@@ -1594,25 +1598,6 @@ def validate_compile_plan(
     for raw_id, annotation in annotations.items():
         if raw_id not in lookup or not str(annotation.get("summary", "")).strip():
             raise ValidationError(f"invalid raw annotation: {raw_id}")
-        headline = str(annotation["summary"]).strip()
-        if not 60 <= len(headline) <= 100:
-            raise ValidationError(f"raw annotation summary must contain 60 to 100 characters: {raw_id}")
-        segments = annotation.get("summary_segments")
-        if not isinstance(segments, list) or not segments or any(not isinstance(item, str) for item in segments):
-            raise ValidationError(f"raw annotation summary_segments must be a non-empty string array: {raw_id}")
-        body = lookup[raw_id].body
-        if any(not item.strip() or len(item.strip()) > 300 for item in segments):
-            raise ValidationError(f"raw annotation summary_segments must contain 1 to 300 characters: {raw_id}")
-        if len(body) >= 50 and any(len(item.strip()) < 50 for item in segments):
-            raise ValidationError(f"raw annotation summary_segments must contain at least 50 characters: {raw_id}")
-        atoms = atomize_body(body)
-        groups = annotation.get("body_groups")
-        if not isinstance(groups, list):
-            raise ValidationError(f"raw annotation body_groups must be an array: {raw_id}")
-        try:
-            validate_body_groups(atoms, groups) if groups else default_body_groups(atoms)
-        except ValueError as error:
-            raise ValidationError(f"invalid raw annotation body_groups: {raw_id}: {error}") from error
         importance = annotation.get("importance")
         if not isinstance(importance, int) or not 1 <= importance <= 5:
             raise ValidationError(f"importance must be an integer from 1 to 5: {raw_id}")
@@ -2154,17 +2139,9 @@ def build_raw_annotations(repo: Path, plan: CompilePlan, entries: list[RawEntry]
         meta, body = frontmatter.read_document(entry.path)
         before = sha256_text(body)
         if annotation:
-            meta["summary"] = str(annotation["summary"]).strip()
-            meta["summary_segments"] = [str(value).strip() for value in annotation["summary_segments"]]
-            atoms = atomize_body(body)
-            groups = annotation["body_groups"]
-            selected_groups = validate_body_groups(atoms, groups) if groups else default_body_groups(atoms)
-            meta["body_sections"] = sections_from_groups(
-                body,
-                atoms,
-                selected_groups,
-                source="agent" if groups else "deterministic",
-            )
+            meta["summary"] = str(annotation["summary"])
+            meta.pop("summary_segments", None)
+            meta.pop("body_sections", None)
             meta["importance"] = int(annotation["importance"])
             if annotation.get("emotion"):
                 meta["emotion"] = str(annotation["emotion"])
@@ -2218,22 +2195,12 @@ def build_manifest(
     for raw_id, entry in sorted(raw_entries.items()):
         relative = relpath(entry.path, repo)
         if relative in staged:
-            meta, body = frontmatter.parse_document(staged[relative])
-            title = str(meta.get("title", raw_id))
-            annotations = meta
+            _, body = frontmatter.parse_document(staged[relative])
         else:
-            title = entry.title
             body = entry.body
-            annotations = entry.annotations
         raw_hashes[raw_id] = {
             "path": relative,
             "body_hash": sha256_text(body),
-            "annotation_hash": annotation_hash(
-                title,
-                str(annotations.get("summary", "")),
-                list(annotations.get("summary_segments", [])),
-                list(annotations.get("body_sections", [])),
-            ),
         }
     return {
         "schema": 2,
@@ -2451,10 +2418,6 @@ def raw_payload(entry: RawEntry, *, include_body: bool, include_annotations: boo
     }
     if include_body:
         payload["body"] = entry.body
-        payload["body_atoms"] = [
-            {"id": atom.id, "start": atom.start, "end": atom.end, "text": atom.text}
-            for atom in atomize_body(entry.body)
-        ]
     return payload
 
 
@@ -2501,14 +2464,6 @@ def manifest_drift(repo: Path) -> list[str]:
         entry = lookup[raw_id]
         if sha256_text(entry.body) != info.get("body_hash"):
             drift.append(f"raw:{raw_id}:body")
-        current_annotation_hash = annotation_hash(
-            entry.title,
-            str(entry.annotations.get("summary", "")),
-            list(entry.annotations.get("summary_segments", [])),
-            list(entry.annotations.get("body_sections", [])),
-        )
-        if current_annotation_hash != info.get("annotation_hash"):
-            drift.append(f"raw:{raw_id}:annotation")
     return sorted(drift)
 
 
@@ -2550,8 +2505,22 @@ def determine_update_mode(repo: Path) -> dict[str, Any]:
         "quality_repair": quality_repair,
         **repair_issues,
     }
-    vector = vector_status(repo)
-    decision["vector_reindex_required"] = vector.status not in {"ready", "disabled"}
+    try:
+        vector_plan = plan_vector_update(repo)
+    except Exception as error:
+        vector_plan = VectorUpdatePlan(
+            "full",
+            f"vector update planning failed: {error}",
+            [],
+            [],
+        )
+    decision.update({
+        "vector_reindex_required": vector_plan.mode != "noop",
+        "vector_update_mode": vector_plan.mode,
+        "vector_raw_ids": vector_plan.raw_ids,
+        "vector_removed_raw_ids": vector_plan.removed_raw_ids,
+        "vector_reason": vector_plan.reason,
+    })
     return decision
 
 

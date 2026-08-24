@@ -74,11 +74,11 @@ class RepositoryTestCase(BaseRepositoryTestCase):
 
 
 class CompileIntegrationTest(RepositoryTestCase):
-    def test_rebuild_commit_subject_uses_v25_contract_version(self) -> None:
+    def test_vector_release_keeps_rebuild_commit_on_v24_contract(self) -> None:
         message = commit_message("rebuild", "rebuild", ["raw-1"], ["statement-1"])
 
-        self.assertTrue(message.startswith("chore(rebuild): 重建 v2.5 编译图谱\n"))
-        self.assertNotIn("v2.4", message)
+        self.assertTrue(message.startswith("chore(rebuild): 重建 v2.4 编译图谱\n"))
+        self.assertNotIn("v2.5", message)
 
     def test_zero_node_raw_compiles_without_polluting_graph_and_counts_for_consolidation(self) -> None:
         raw_id = self.add("普通聊天", "我今天和对象随口聊了几句，没有形成决定、承诺或结果。", "2026-08-05")
@@ -2066,9 +2066,9 @@ class RawOnlySequentialRebuildTest(RepositoryTestCase):
         config = frontmatter.parse_mapping((self.repo / ".kb" / "config.yaml").read_text(encoding="utf-8"))
         self.assertEqual(2, config["schema"])
         self.assertEqual(str(self.repo), config["path"])
-        self.assertEqual("2.5.0", config["kb_version"])
+        self.assertEqual("2.4.0", config["kb_version"])
         self.assertNotIn("compile_version", config)
-        self.assertIn("v2.5 编译与检索规则", (self.repo / "AGENTS.md").read_text(encoding="utf-8"))
+        self.assertIn("v2.4 编译与检索规则", (self.repo / "AGENTS.md").read_text(encoding="utf-8"))
         self.assertEqual(DEFAULT_GITIGNORE, (self.repo / ".gitignore").read_text(encoding="utf-8"))
 
     def test_final_tail_rejects_stale_or_invalid_response_without_promotion(self) -> None:

@@ -90,22 +90,22 @@ class BodyGroupTest(unittest.TestCase):
 class CompileSectionProtocolTest(RepositoryTestCase):
     backend = "plain"
 
-    def test_compile_request_exposes_lossless_body_atoms(self) -> None:
+    def test_compile_request_keeps_v24_contract_without_vector_chunk_fields(self) -> None:
         raw_id = self.add("切片协议", "# 标题\n\n第一段内容。\n\n- 列表内容\n", "2026-08-20")
 
         request = build_compile_request(self.repo, mode="incremental")
         entry = next(item for item in request["context"]["raw_entries"] if item["id"] == raw_id)
 
-        self.assertEqual("2.5-raw-semantic-sections", request["context"]["contract_version"])
-        self.assertEqual(entry["body"], "".join(atom["text"] for atom in entry["body_atoms"]))
-        for atom in entry["body_atoms"]:
-            self.assertEqual(entry["body"][atom["start"]:atom["end"]], atom["text"])
+        self.assertEqual("2.4-entity-topic-understanding", request["context"]["contract_version"])
+        self.assertNotIn("body_atoms", entry)
+        schema = request["response_schema"]["raw_annotations"][0]
+        self.assertNotIn("summary_segments", schema)
+        self.assertNotIn("body_groups", schema)
 
-    def test_apply_persists_semantic_sections_without_changing_body_hash(self) -> None:
+    def test_apply_does_not_persist_vector_chunk_fields_or_change_body_hash(self) -> None:
         body = "第一段说明了原料的具体经历，并且保留了后续回顾所需的事实。第二段补充了当前判断与来源边界。"
         raw_id = self.add("持久化切片", body, "2026-08-20")
         request = build_compile_request(self.repo, mode="incremental")
-        entry = request["context"]["raw_entries"][0]
         plan = {
             "schema_version": 2,
             "session_id": request["context"]["session_id"],
@@ -131,44 +131,5 @@ class CompileSectionProtocolTest(RepositoryTestCase):
 
         meta, after_body = frontmatter.read_document(raw_path)
         self.assertEqual(sha256_text(before_body), sha256_text(after_body))
-        self.assertEqual(plan["raw_annotations"][0]["summary_segments"], meta["summary_segments"])
-        self.assertEqual(entry["body"], "".join(entry["body"][section["start"]:section["end"]] for section in meta["body_sections"]))
-        self.assertTrue(all(set(section) == {"start", "end", "source"} for section in meta["body_sections"]))
-
-    def test_apply_persists_stripped_canonical_annotation_text(self) -> None:
-        body = "正文包含足够长度，用于验证摘要字段在校验和持久化阶段使用同一份规范化文本。" * 3
-        raw_id = self.add("摘要规范化", body, "2026-08-20")
-        raw_path = next((self.repo / "raw").rglob("*.md"))
-        _, before_body = frontmatter.read_document(raw_path)
-        request = build_compile_request(self.repo, mode="incremental")
-        headline = "甲" * 100
-        segment = "乙" * 300
-        plan = {
-            "schema_version": 2,
-            "session_id": request["context"]["session_id"],
-            "mode": "incremental",
-            "raw_annotations": [{
-                "raw_id": raw_id,
-                "summary": f" \n{headline}\t ",
-                "summary_segments": [f" \n{segment}\t "],
-                "body_groups": [],
-                "importance": 1,
-                "emotion": "",
-                "mentions": [],
-                "occurrences": [],
-                "claims": [],
-            }],
-            "node_actions": [],
-            "out_edges": [],
-            "candidates": [],
-            "consolidation_memo": request["context"]["consolidation_memo"],
-        }
-
-        apply_response(self.repo, plan, command="compile")
-
-        meta, after_body = frontmatter.read_document(raw_path)
-        self.assertEqual(headline, meta["summary"])
-        self.assertEqual([segment], meta["summary_segments"])
-        self.assertEqual(100, len(meta["summary"]))
-        self.assertEqual(300, len(meta["summary_segments"][0]))
-        self.assertEqual(before_body, after_body)
+        self.assertNotIn("summary_segments", meta)
+        self.assertNotIn("body_sections", meta)

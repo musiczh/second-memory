@@ -15,9 +15,7 @@ def compile_response_schema(session_id: str = "session-from-request", mode: str 
         "mode": mode,
         "raw_annotations": [{
             "raw_id": "raw-...",
-            "summary": "60～100 字符的原料 headline 摘要",
-            "summary_segments": ["50～300 字符的有序语义摘要段；全文不足 50 字符时可使用短段"],
-            "body_groups": [["atom-0-0-...", "atom-1-...（连续、有序、无重复且覆盖全部 body_atoms）"]],
+            "summary": "一句话原料摘要",
             "importance": 1,
             "emotion": "可选情绪",
             "mentions": [{"text": "明确出现的对象", "kind": "person|organization|place|work|product|tool|project|task|object|concept|emotion", "target_id": "可选：已解析的现有实体 ID", "confidence": 0.95}],

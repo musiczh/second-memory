@@ -11,18 +11,17 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
-from .chunking import annotation_hash
 from .config import VECTOR_CACHE_CONFIG_KEYS, load_config
 from .embedding import EmbeddingProvider, EmbeddingSpec, FastEmbedProvider
 from .models import RawEntry
 from .utils import sha256_text
 
 
-VECTOR_CACHE_SCHEMA = 1
+VECTOR_CACHE_SCHEMA = 2
 _CACHE_DIR = Path(".kb/vectors")
 _MANIFEST_KEYS = {
     "schema", "provider", "model", "model_hash", "dimension", "spec",
-    "spec_fingerprint", "config_fingerprint", "input_fingerprint",
+    "spec_fingerprint", "config_fingerprint", "global_fingerprint", "input_fingerprint",
     "raw_count", "unit_count", "raws",
 }
 _SPEC_KEYS = {"provider", "model", "dimension", "dtype", "normalization", "runtime", "model_hash"}
@@ -57,6 +56,14 @@ class VectorCacheState:
 
 
 @dataclass(frozen=True)
+class VectorUpdatePlan:
+    mode: str
+    reason: str
+    raw_ids: list[str]
+    removed_raw_ids: list[str]
+
+
+@dataclass(frozen=True)
 class VectorUnit:
     chunk_id: str
     raw_id: str
@@ -85,49 +92,26 @@ class VectorSearchResult:
 def build_vector_units(entry: RawEntry, config: dict[str, Any]) -> list[VectorUnit]:
     """Build stable text-bearing locators without calling an embedding provider."""
     minimum, target, maximum, overlap = _chunk_config(config)
-    annotations = entry.annotations
-    headline = str(annotations.get("summary", ""))
-    segments = annotations.get("summary_segments")
-    sections = annotations.get("body_sections")
-    if not headline or not isinstance(segments, list) or not segments:
+    headline = entry.title.strip()
+    summary = str(entry.annotations.get("summary", "")).strip()
+    if not headline or not summary:
         raise VectorCacheError(f"raw annotation is incomplete: {entry.id}")
-    if not isinstance(sections, list) or not sections:
-        raise VectorCacheError(f"raw body sections are incomplete: {entry.id}")
 
-    units = [_unit(entry.id, "headline", headline)]
-    for index, value in enumerate(segments):
-        if not isinstance(value, str) or not value:
-            raise VectorCacheError(f"raw summary segment is invalid: {entry.id}")
-        units.append(_unit(entry.id, "summary", value, segment_index=index))
-
-    previous_end = 0
-    for section_index, section in enumerate(sections):
-        if not isinstance(section, dict):
-            raise VectorCacheError(f"raw body section is invalid: {entry.id}")
-        start = _integer(section.get("start"), "body section start")
-        end = _integer(section.get("end"), "body section end")
-        if start != previous_end or end <= start or end > len(entry.body):
-            raise VectorCacheError(f"raw body sections must be ordered contiguous offsets: {entry.id}")
-        previous_end = end
-        length = end - start
-        if length < minimum and len(entry.body) >= minimum:
-            raise VectorCacheError(
-                f"raw body section is shorter than the vector chunk minimum: {entry.id}: section {section_index}"
+    units = [
+        _unit(entry.id, "headline", headline),
+        _unit(entry.id, "summary", summary, segment_index=0),
+    ]
+    for chunk_start, chunk_end in _chunk_offsets(0, len(entry.body), target, minimum, maximum, overlap):
+        units.append(
+            _unit(
+                entry.id,
+                "body",
+                entry.body[chunk_start:chunk_end],
+                section_index=0,
+                start=chunk_start,
+                end=chunk_end,
             )
-        for chunk_start, chunk_end in _chunk_offsets(start, end, target, minimum, maximum, overlap):
-            text = entry.body[chunk_start:chunk_end]
-            units.append(
-                _unit(
-                    entry.id,
-                    "body",
-                    text,
-                    section_index=section_index,
-                    start=chunk_start,
-                    end=chunk_end,
-                )
-            )
-    if previous_end != len(entry.body):
-        raise VectorCacheError(f"raw body sections must cover the complete body: {entry.id}")
+        )
     return units
 
 
@@ -135,15 +119,12 @@ def resolve_vector_unit_text(entry: RawEntry, unit: VectorUnit | dict[str, Any])
     """Resolve a text-free cache locator against the immutable Raw document."""
     kind = str(unit.kind if isinstance(unit, VectorUnit) else unit.get("kind", ""))
     if kind == "headline":
-        return str(entry.annotations.get("summary", ""))
+        return entry.title
     if kind == "summary":
         index = unit.segment_index if isinstance(unit, VectorUnit) else unit.get("segment_index")
-        if not isinstance(index, int):
-            raise VectorCacheError(f"summary unit has no segment index: {entry.id}")
-        segments = entry.annotations.get("summary_segments", [])
-        if not isinstance(segments, list) or not 0 <= index < len(segments):
+        if index != 0:
             raise VectorCacheError(f"summary segment index is out of range: {entry.id}")
-        return str(segments[index])
+        return str(entry.annotations.get("summary", ""))
     if kind == "body":
         start = unit.start if isinstance(unit, VectorUnit) else unit.get("start")
         end = unit.end if isinstance(unit, VectorUnit) else unit.get("end")
@@ -159,6 +140,7 @@ def reindex_vectors(
     offline: bool = False,
     raw_ids: Sequence[str] | None = None,
     destination: Path | None = None,
+    force: bool = False,
 ) -> VectorCacheState:
     """Build a complete cache and atomically install it at destination."""
     repo = Path(repo)
@@ -172,7 +154,19 @@ def reindex_vectors(
     compiled_ids = sorted(str(raw_id) for raw_id in _load_manifest(repo).get("compiled_raw", []))
     if any(raw_id not in entries for raw_id in compiled_ids):
         raise VectorCacheError("compiled Raw set contains a missing source file")
-    selected = set(compiled_ids if raw_ids is None else map(str, raw_ids))
+    if force and raw_ids is not None:
+        raise VectorCacheError("force cannot be combined with explicit raw_ids")
+    if force:
+        selected = set(compiled_ids)
+    elif raw_ids is None and destination is not None:
+        selected = set(compiled_ids)
+    elif raw_ids is None:
+        plan = plan_vector_update(repo, provider=embedding_provider)
+        if plan.mode == "noop":
+            return vector_status(repo)
+        selected = set(compiled_ids if plan.mode == "full" else plan.raw_ids)
+    else:
+        selected = set(map(str, raw_ids))
     unknown = selected - set(compiled_ids)
     if unknown:
         raise VectorCacheError("reindex raw_ids are outside the compiled Raw set: " + ", ".join(sorted(unknown)))
@@ -223,6 +217,90 @@ def reindex_vectors(
     if not state.ready:
         raise VectorCacheError(f"installed vector cache did not validate: {state.status}: {state.reason}")
     return state
+
+
+def plan_vector_update(
+    repo: Path,
+    *,
+    provider: EmbeddingProvider | None = None,
+) -> VectorUpdatePlan:
+    """Classify vector maintenance without conflating it with the compiled layer."""
+    repo = Path(repo)
+    config = load_config(repo)
+    if not bool(config.get("vector_enabled", True)):
+        return VectorUpdatePlan("noop", "vector retrieval is disabled", [], [])
+    entries = _raw_lookup(repo)
+    compiled_ids = sorted(str(raw_id) for raw_id in _load_manifest(repo).get("compiled_raw", []))
+    if any(raw_id not in entries for raw_id in compiled_ids):
+        raise VectorCacheError("compiled Raw set contains a missing source file")
+    inputs = _current_inputs(repo, entries, compiled_ids, require_main_manifest=True)
+    manifest_path = repo / _CACHE_DIR / "manifest.json"
+    if not manifest_path.is_file():
+        return VectorUpdatePlan("full", "vector cache has not been built", compiled_ids, [])
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if not isinstance(manifest, dict) or set(manifest) != _MANIFEST_KEYS:
+            raise VectorCacheError("vector cache manifest fields are invalid")
+        if _nonnegative_integer(manifest.get("schema"), "vector cache schema") != VECTOR_CACHE_SCHEMA:
+            raise VectorCacheError("vector cache schema differs")
+        cached_spec = _spec_from_manifest(manifest)
+        _validate_spec_against_config(cached_spec, config)
+        cached_spec_fingerprint = _spec_fingerprint(cached_spec)
+        cached_config_fingerprint = str(manifest.get("config_fingerprint", ""))
+        if manifest.get("spec_fingerprint") != cached_spec_fingerprint:
+            raise VectorCacheError("embedding spec fingerprint is invalid")
+        if manifest.get("global_fingerprint") != _global_fingerprint_from_parts(
+            cached_spec_fingerprint,
+            cached_config_fingerprint,
+        ):
+            raise VectorCacheError("vector global fingerprint is invalid")
+        active_spec = provider.spec if provider is not None else cached_spec
+        _validate_spec_against_config(active_spec, config)
+        expected_global = _global_fingerprint(active_spec, config)
+        if manifest.get("global_fingerprint") != expected_global:
+            return VectorUpdatePlan(
+                "full",
+                "vector global fingerprint changed",
+                compiled_ids,
+                sorted(set(manifest.get("raws", {})) - set(compiled_ids)) if isinstance(manifest.get("raws"), dict) else [],
+            )
+        raw_manifests = manifest.get("raws")
+        if not isinstance(raw_manifests, dict):
+            raise VectorCacheError("vector Raw manifest is invalid")
+        stale_raw_ids: list[str] = []
+        total_units = 0
+        for raw_id in compiled_ids:
+            info = raw_manifests.get(raw_id)
+            try:
+                if not isinstance(info, dict) or set(info) != _RAW_INFO_KEYS:
+                    raise VectorCacheError(f"vector Raw manifest fields are invalid: {raw_id}")
+                if any(info.get(key) != value for key, value in inputs[raw_id].items()):
+                    raise VectorCacheError(f"Raw fingerprint differs from the cache: {raw_id}")
+                relative = Path(str(info.get("file", "")))
+                if relative.parts != ("raw", f"{raw_id}.jsonl"):
+                    raise VectorCacheError(f"vector JSONL path is invalid: {raw_id}")
+                rows = _read_rows(repo / _CACHE_DIR / relative, raw_id, info, active_spec.dimension)
+                if len(rows) != _nonnegative_integer(info.get("unit_count"), f"vector unit count: {raw_id}"):
+                    raise VectorCacheError(f"vector unit count is invalid: {raw_id}")
+                _validate_rows_against_units(rows, build_vector_units(entries[raw_id], config), raw_id)
+                total_units += len(rows)
+            except Exception:
+                stale_raw_ids.append(raw_id)
+        removed_raw_ids = sorted(set(raw_manifests) - set(compiled_ids))
+        aggregate_invalid = (
+            _nonnegative_integer(manifest.get("raw_count"), "vector Raw count") != len(raw_manifests)
+            or _nonnegative_integer(manifest.get("unit_count"), "vector cache total unit count") != total_units
+        )
+        if stale_raw_ids or removed_raw_ids or aggregate_invalid:
+            return VectorUpdatePlan(
+                "incremental",
+                "vector cache has missing, stale, removed, or inconsistent Raw entries",
+                stale_raw_ids,
+                removed_raw_ids,
+            )
+        return VectorUpdatePlan("noop", "vector cache is current", [], [])
+    except Exception as error:
+        return VectorUpdatePlan("full", f"vector cache cannot be safely reused: {error}", compiled_ids, [])
 
 
 def vector_status(repo: Path, *, destination: Path | None = None) -> VectorCacheState:
@@ -459,6 +537,7 @@ def _build_cache_manifest(
         "spec": asdict(spec),
         "spec_fingerprint": _spec_fingerprint(spec),
         "config_fingerprint": _config_fingerprint(config),
+        "global_fingerprint": _global_fingerprint(spec, config),
         "input_fingerprint": _fingerprint(inputs),
         "raw_count": len(raws),
         "unit_count": sum(int(info["unit_count"]) for info in raws.values()),
@@ -519,15 +598,24 @@ def _inspect_cache(repo: Path, cache_root: Path, *, ignore_pending: bool = False
         if _nonnegative_integer(manifest.get("schema"), "vector cache schema") != VECTOR_CACHE_SCHEMA:
             raise VectorCacheError("vector cache schema is invalid")
         spec = _spec_from_manifest(manifest)
-        if _spec_fingerprint(spec) != manifest.get("spec_fingerprint"):
+        spec_fingerprint = _spec_fingerprint(spec)
+        if spec_fingerprint != manifest.get("spec_fingerprint"):
             raise VectorCacheError("embedding spec fingerprint is invalid")
         if manifest.get("provider") != spec.provider or manifest.get("model") != spec.model:
             raise VectorCacheError("embedding spec fields are inconsistent")
         dimension = _positive_integer(manifest.get("dimension"), "vector cache dimension")
         if manifest.get("model_hash") != spec.model_hash or dimension != spec.dimension:
             raise VectorCacheError("embedding model fields are inconsistent")
-        if manifest.get("config_fingerprint") != _config_fingerprint(config):
+        config_fingerprint = _config_fingerprint(config)
+        if manifest.get("global_fingerprint") != _global_fingerprint_from_parts(
+            spec_fingerprint,
+            str(manifest.get("config_fingerprint", "")),
+        ):
+            raise VectorCacheError("vector global fingerprint is invalid")
+        if manifest.get("config_fingerprint") != config_fingerprint:
             return VectorCacheState("stale", "vector configuration differs from the cache", manifest)
+        if manifest.get("global_fingerprint") != _global_fingerprint(spec, config):
+            return VectorCacheState("stale", "vector global fingerprint differs from the cache", manifest)
         _validate_spec_against_config(spec, config)
         entries = _raw_lookup(repo)
         compiled_ids = sorted(str(raw_id) for raw_id in _load_manifest(repo).get("compiled_raw", []))
@@ -584,18 +672,15 @@ def _current_inputs(
         if entry is None:
             raise VectorCacheError(f"compiled Raw source is missing: {raw_id}")
         body_hash = sha256_text(entry.body)
-        current_annotation_hash = annotation_hash(
-            entry.title,
-            str(entry.annotations.get("summary", "")),
-            list(entry.annotations.get("summary_segments", [])),
-            list(entry.annotations.get("body_sections", [])),
-        )
+        current_annotation_hash = _fingerprint({
+            "title": entry.title,
+            "summary": str(entry.annotations.get("summary", "")).strip(),
+        })
         main = main_raws.get(raw_id, {})
         path = str(entry.path.relative_to(repo))
         if require_main_manifest and (
             main.get("path") != path
             or main.get("body_hash") != body_hash
-            or main.get("annotation_hash") != current_annotation_hash
         ):
             raise VectorCacheStaleError(f"main manifest Raw fingerprint is stale: {raw_id}")
         raw_fingerprint = _fingerprint({
@@ -626,9 +711,25 @@ def _reusable_files(
         return {}
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        if manifest.get("spec_fingerprint") != _spec_fingerprint(spec):
+        if not isinstance(manifest, dict) or set(manifest) != _MANIFEST_KEYS:
             return {}
-        if manifest.get("config_fingerprint") != _config_fingerprint(config):
+        if _nonnegative_integer(manifest.get("schema"), "vector cache schema") != VECTOR_CACHE_SCHEMA:
+            return {}
+        cached_spec = _spec_from_manifest(manifest)
+        spec_fingerprint = _spec_fingerprint(spec)
+        config_fingerprint = _config_fingerprint(config)
+        if cached_spec != spec or manifest.get("spec_fingerprint") != spec_fingerprint:
+            return {}
+        if manifest.get("provider") != spec.provider or manifest.get("model") != spec.model:
+            return {}
+        if manifest.get("model_hash") != spec.model_hash or manifest.get("dimension") != spec.dimension:
+            return {}
+        if manifest.get("config_fingerprint") != config_fingerprint:
+            return {}
+        if manifest.get("global_fingerprint") != _global_fingerprint_from_parts(
+            spec_fingerprint,
+            config_fingerprint,
+        ):
             return {}
         raws = manifest.get("raws", {})
         reused: dict[str, tuple[bytes, int]] = {}
@@ -810,6 +911,18 @@ def _spec_fingerprint(spec: EmbeddingSpec) -> str:
 
 def _config_fingerprint(config: dict[str, Any]) -> str:
     return _fingerprint({key: config.get(key) for key in VECTOR_CACHE_CONFIG_KEYS})
+
+
+def _global_fingerprint(spec: EmbeddingSpec, config: dict[str, Any]) -> str:
+    return _global_fingerprint_from_parts(_spec_fingerprint(spec), _config_fingerprint(config))
+
+
+def _global_fingerprint_from_parts(spec_fingerprint: str, config_fingerprint: str) -> str:
+    return _fingerprint({
+        "schema": VECTOR_CACHE_SCHEMA,
+        "spec_fingerprint": spec_fingerprint,
+        "config_fingerprint": config_fingerprint,
+    })
 
 
 def _fingerprint(value: object) -> str:

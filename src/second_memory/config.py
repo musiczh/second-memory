@@ -15,7 +15,7 @@ VALID_SCOPES = {"shared", "agent"}
 # compiled layer from the raw archive. It is intentionally separate from the
 # package version (__init__.__version__): plain code updates that do not change
 # compile rules must NOT bump this, so `update` will not force a rebuild.
-KB_VERSION = "2.5.0"
+KB_VERSION = "2.4.0"
 
 VECTOR_DEFAULTS: dict[str, Any] = {
     "vector_enabled": True,

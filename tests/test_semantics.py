@@ -29,15 +29,10 @@ from tests.helpers import RepositoryTestCase
 
 RAW_ID = "raw-20260805-0900-semantics"
 RAW_HEADLINE = "郑焕在 Second Memory 项目中完成语义契约验证，确认内容质量、事件发生性与来源追溯规则能够持续受到约束，并为后续编译回归留下稳定依据。"
-RAW_SEGMENT = "该原料记录了郑焕在 Second Memory 项目中完成语义契约验证的过程，验证覆盖内容质量、事件发生性与来源追溯，并为后续编译回归保留可审计依据。"
 
 
 def raw_annotation_fields() -> dict[str, Any]:
-    return {
-        "summary": RAW_HEADLINE,
-        "summary_segments": [RAW_SEGMENT],
-        "body_groups": [],
-    }
+    return {"summary": RAW_HEADLINE}
 
 
 def content(*, source_id: str = RAW_ID, node_type: str = "statement") -> dict[str, Any]:
@@ -553,59 +548,14 @@ class CompilePlanSemanticsTest(unittest.TestCase):
 
         validate_compile_plan(plan, [self.raw], {RAW_ID: self.raw})
 
-    def test_raw_annotation_rejects_invalid_v25_headline_and_groups(self) -> None:
+    def test_raw_annotation_requires_a_non_empty_summary_without_vector_fields(self) -> None:
         plan = compile_plan(create_action())
-        plan.raw_annotations[0]["summary"] = "过短摘要"
+        plan.raw_annotations[0]["summary"] = "  "
 
-        with self.assertRaisesRegex(ValidationError, "60 to 100"):
+        with self.assertRaisesRegex(ValidationError, "invalid raw annotation"):
             validate_compile_plan(plan, [self.raw], {RAW_ID: self.raw})
 
-        plan = compile_plan(create_action())
-        plan.raw_annotations[0]["body_groups"] = [["unknown-atom"]]
-
-        with self.assertRaisesRegex(ValidationError, "body_groups"):
-            validate_compile_plan(plan, [self.raw], {RAW_ID: self.raw})
-
-    def test_raw_annotation_requires_non_empty_summary_segments(self) -> None:
-        for label, value in [("missing", None), ("empty", [])]:
-            with self.subTest(label=label):
-                plan = compile_plan(create_action())
-                if value is None:
-                    del plan.raw_annotations[0]["summary_segments"]
-                else:
-                    plan.raw_annotations[0]["summary_segments"] = value
-
-                with self.assertRaisesRegex(ValidationError, "summary_segments"):
-                    validate_compile_plan(plan, [self.raw], {RAW_ID: self.raw})
-
-    def test_raw_annotation_enforces_summary_segment_bounds_for_long_body(self) -> None:
-        long_raw = replace(self.raw, body="甲" * 50)
-        for label, segment, message in [
-            ("below-minimum", "甲" * 49, "at least 50"),
-            ("above-maximum", "甲" * 301, "1 to 300"),
-        ]:
-            with self.subTest(label=label):
-                plan = compile_plan(create_action())
-                plan.raw_annotations[0]["summary_segments"] = [segment]
-
-                with self.assertRaisesRegex(ValidationError, message):
-                    validate_compile_plan(plan, [long_raw], {RAW_ID: long_raw})
-
-    def test_raw_annotation_whitespace_cannot_bypass_text_bounds(self) -> None:
-        plan = compile_plan(create_action())
-        plan.raw_annotations[0]["summary"] = " \n" + "甲" * 101 + "\t "
-        with self.assertRaisesRegex(ValidationError, "60 to 100"):
-            validate_compile_plan(plan, [self.raw], {RAW_ID: self.raw})
-
-        long_raw = replace(self.raw, body="正文" * 30)
-        plan = compile_plan(create_action())
-        plan.raw_annotations[0]["summary_segments"] = [" \n" + "乙" * 301 + "\t "]
-        with self.assertRaisesRegex(ValidationError, "1 to 300"):
-            validate_compile_plan(plan, [long_raw], {RAW_ID: long_raw})
-
-    def test_raw_annotation_allows_short_summary_segment_for_short_body(self) -> None:
-        plan = compile_plan(create_action())
-        plan.raw_annotations[0]["summary_segments"] = ["短摘要"]
+        plan.raw_annotations[0]["summary"] = "短摘要"
 
         validate_compile_plan(plan, [self.raw], {RAW_ID: self.raw})
 

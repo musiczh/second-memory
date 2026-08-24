@@ -1,24 +1,21 @@
 # 编译层数据组织与存储架构设计
 
-> 状态：V2.5 实施规范（继承 V2.4 TopicContract，增加 Raw 分段与本地向量补充召回）
-> 适用版本：`KB_VERSION >= 2.5.0`
-> 关联代码：`src/second_memory/compiler.py`、`chunking.py`、`vectors.py`、`retriever.py`、`wiki.py`
+> 状态：V2.4 编译层＋独立向量缓存实施规范
+> 适用版本：`KB_VERSION = 2.4.0`，向量缓存使用独立 schema／全局指纹
+> 关联代码：`src/second_memory/compiler.py`、`vectors.py`、`retriever.py`、`wiki.py`
 
-## 0.0 V2.5 Raw 向量补充召回（优先级最高）
+## 0.0 独立 Raw 向量补充召回（优先级最高）
 
-V2.5 只为 Raw 增加可重建的本地向量缓存，不改变 V2.4 的 TopicContract 门槛、成员校验、action、edge 或来源闭包。主链路固定为：
+向量能力只增加可重建的本地派生缓存，不改变 V2.4 的 CompilePlan、Raw 注解、TopicContract、action、edge 或来源闭包，也不提升 `KB_VERSION`。主链路固定为：
 
 ```text
 immutable Raw body
         │
         ▼
-atomize（确定性 body_atoms 与 code-point offsets）
+读取 Raw title、既有编译 summary 与 immutable body
         │
         ▼
-annotate（headline summary + ordered summary_segments + body_groups）
-        │
-        ▼
-chunk（只在持久化 body_sections 内切片，定位信息可回切 Raw）
+chunk（向量层确定性分块，code-point offsets 可回切 Raw）
         │
         ▼
 embed（固定本地 BGE／CPU／float32／L2 normalized）
@@ -33,7 +30,7 @@ supplemental retrieval（有界 top units，回切短 snippet，只作候选证�
 增量 Apply 使用 transaction-coordinated、journal-recoverable 的多目录切换，而不是把多个目录误述为单个文件系统原子操作：
 
 ```text
-incremental staging：vectors.next + Wiki + Raw annotation + manifest
+incremental staging：vectors.next + Wiki + V2.4 Raw annotation + manifest
                             │
                             ├─ vectors.next ready
                             │      └─▶ journal=promoting
@@ -47,14 +44,14 @@ incremental staging：vectors.next + Wiki + Raw annotation + manifest
                             └─▶ 确定性 rollback 或 finalize
 ```
 
-Raw-only rebuild 的边界不同：workspace 核心投影先完成 promotion 和 Git commit；提交成功后才执行一次 `offline=True` 的全量 reindex。该 reindex 是 best-effort，失败只返回向量降级状态，不回滚已经提交的 rebuild 核心结果。
+Raw-only rebuild 的边界不同：workspace 核心投影先完成 promotion 和 Git commit；提交成功后才执行一次 `offline=True` 的向量协调。全局指纹兼容时只重建输入发生变化的 Raw；指纹不兼容时才全量 reindex。该操作是 best-effort，失败只返回向量降级状态，不回滚已经提交的 rebuild 核心结果。
 
 - 核心知识仍以不可变 Raw 和可审计编译投影为准；`.kb/vectors/` 是 Git 忽略、可删除重建的辅助缓存。
 - 普通 Apply、search、status 只允许使用本地模型；只有显式 `vectors reindex` 可以进入模型下载边界。缓存非 ready 时，检索输出和 Topic／Consolidation 请求返回明确 `status/reason` 与空向量结果，不能阻断核心工作流。
 - `search_level1` 的关键词／图谱候选、分数和顺序保持不变，向量结果只追加到 `supplemental_raw`。Level 2 只携带 top unit locator、短 snippet 和有界 Raw 元数据，不发送整篇 Raw。
 - Topic／Consolidation 的 `vector_support_catalog` 只对已有 topic contract 或稳定 topic candidate 中显式保存的 `organizing_question` 做有界检索。相同问题只搜索一次并聚合稳定 `source_refs`；唯一 query 最多 `vector_raw_limit` 条，catalog entry 全局最多 `vector_unit_limit` 条。不存在持久化问题时返回空目录；Host Agent 提出全新组织问题时，先显式执行 `second-memory vectors search`。
 - 向量命中只提供 `query`、来源 `source_refs`、`raw_id`、locator、短 snippet、score 与 cache status。相同 `(query, chunk_id)` 去重后按 score 和稳定 tie-break 全局排序。它不进入 `member_catalog/raw_catalog`，不自动产生成员、action、edge 或 `belongs_to`；成员仍须逐项通过 V2.4 TopicContract。
-- Wiki Raw 详情把 `summary` 作为 headline，并按原顺序展示 `summary_segments`；旧 Raw 缺少 segments 时只回退显示一次 headline，避免重复。
+- Wiki Raw 详情继续使用 V2.4 的 `summary`；向量分块信息只存在 `.kb/vectors/`，不写回 Raw 或 Wiki。
 
 ## 0. V2.4 实体覆盖、主题提炼与理解层契约（优先级最高）
 
@@ -473,15 +470,23 @@ rebuild 是对正常入库链路的确定性重放，不是旧编译页的数据
 
 ### 5.1 输入与分块
 
-向量索引只处理 manifest 中已编译的 Raw，不对 Wiki page、Topic 或 Agent 生成文本建索引。每条 Raw 固定生成 headline、summary segment 和 body chunk 三类 unit；body chunk 只能在已持久化的 `body_sections` 内切分，locator 以 Unicode code-point offset 回切原文。Raw body 不因注解、建索引或检索而改写。
+向量索引只处理 manifest 中已编译的 Raw，不对 Wiki page、Topic 或 Agent 生成节点内容建索引。每条 Raw 固定生成三类 unit：`headline` 读取 Raw title，`summary` 读取既有 V2.4 编译摘要，`body` 由向量层按配置确定性分块；body locator 以 Unicode code-point offset 回切原文。Raw body、编译注解、Wiki 与主 manifest 不因建索引或检索而增加向量专用字段。
 
-`summary` 与 `summary_segments` 在长度校验和持久化时都使用 strip 后的 canonical 值；`annotation_hash` 与 embedding 只读取这份持久化文本。主 manifest 中的 Raw path、body hash 或 annotation hash 与当前 Raw 不一致时，cache fail-closed 为 stale。
+每条向量 Raw 使用独立输入指纹，覆盖 title、编译 summary 与 body hash。主 manifest 只继续校验 V2.4 已有的 Raw path 与 body hash；summary 变化只使对应向量条目失效，不触发编译层 drift 或 raw-only rebuild。
 
 ### 5.2 模型与缓存协议
 
 唯一 provider 是 FastEmbed，运行时固定为 CPU `onnxruntime-cpu`、`float32`、L2 normalized；provider、model、dimension 来自受支持的 vector config，model hash 必须是 64 位小写 SHA-256。普通 Apply、search、status、update 只使用本地模型，不触发下载；只有用户显式执行 `second-memory vectors reindex` 时才可进入下载边界，`--offline` 则强制只读本地 cache。
 
-`.kb/vectors/` 是 Git-ignored supplemental cache。manifest 与 spec 使用固定 exact-key schema；每条 Raw 的 JSONL 只保存 locator、input hashes 和 vector，不保存 body、snippet、text 或其他未知字段。任意 schema、fingerprint、文件、unit 或 locator 不一致都使整个 cache 非 ready，不提供 partial 结果。
+`.kb/vectors/` 是 Git-ignored supplemental cache。manifest 与 spec 使用固定 exact-key schema；每条 Raw 的 JSONL 只保存 locator、input hashes 和 vector，不保存 body、snippet、text 或其他未知字段。全局指纹覆盖 `VECTOR_CACHE_SCHEMA`、embedding spec／模型哈希、维度和影响缓存的分块配置；这些任一项变化时旧向量整体不可复用。
+
+向量更新计划固定为：
+
+- `full`：缓存不存在、全局指纹变化，或缓存结构损坏到无法安全判断局部复用；重新向量化全部已编译 Raw。
+- `incremental`：全局指纹一致，只重新向量化缺失、文件损坏或输入指纹变化的 `vector_raw_ids`，删除已不存在的 `vector_removed_raw_ids`，其余 JSONL 原样复用。
+- `noop`：全局和逐 Raw 完整性均一致，不初始化 embedding provider，也不改写缓存。
+
+`second-memory vectors reindex` 默认执行上述协调；只有显式 `--force` 才在全局指纹未变化时仍全量重算。自动维护禁止使用 `--force`。
 
 ### 5.3 检索和补充证据
 
@@ -501,7 +506,7 @@ Level 2 的 `candidate_pages`、`source_snippets`、`vector_units` 与 `vector_r
 
 增量 Apply 可在同一 journal-coordinated transaction 中 staging 完整 `vectors.next`；只有 staged cache 自检 ready 才与核心投影一起 promotion。模型缺失、推理或 cache 构建失败时丢弃 vector stage，核心 Apply 仍可提交。journal 必须符合 schema 2 的严格结构；合法 JSON 但结构错误也视为 corrupt，从 backup 执行保守恢复。
 
-Raw-only rebuild 的 workspace 不构建向量。核心最终提交后才执行一次 local-only 全量 reindex；reindex 失败不回滚已提交的核心结果。清理 workspace 前必须先持久化 `rebuild.phase=complete`，使清理失败后的残留 workspace 不可被重复 finalize 或 reindex；显式新 rebuild 先只重试清理该残留目录。
+Raw-only rebuild 的 workspace 不构建向量。核心最终提交后才执行一次 local-only 向量协调；全局指纹兼容时允许复用输入未变化的 Raw，只有不兼容时才全量 reindex。失败不回滚已提交的核心结果。清理 workspace 前必须先持久化 `rebuild.phase=complete`，使清理失败后的残留 workspace 不可被重复 finalize 或 reindex；显式新 rebuild 先只重试清理该残留目录。
 
 ---
 
@@ -512,10 +517,10 @@ Raw-only rebuild 的 workspace 不构建向量。核心最终提交后才执行�
 | `ready` | manifest、spec、Raw fingerprints、JSONL 与 locators 全部通过校验 | 返回有界 supplemental |
 | `disabled` | `vector_enabled=false` | supplemental 为空，keyword 不变 |
 | `pending`／`missing` | 尚未建 cache、注解待编译或本地模型不可用 | supplemental 为空，核心流程继续 |
-| `stale` | config、主 manifest 或 Raw 输入变化 | fail-closed，不复用旧向量 |
+| `stale` | config、全局指纹或某个 Raw 输入变化 | fail-closed，不返回 partial；维护时按 full／incremental 计划处理 |
 | `corrupt` | schema、hash、文件、vector 或 locator 无法完整验证 | fail-closed，不返回 partial |
 
-status 和 search 只检查本地状态。显式 reindex 完整生成 cache 后切换并做整体状态校验；非 ready 时不提供 partial 结果。运行时 cache 不进入 Git index，rebuild 也不把它复制进核心 workspace。
+status 和 search 只检查本地状态。reindex 生成完整目标 cache manifest，复用兼容文件并只嵌入计划中的 Raw，随后原子切换并做整体状态校验；非 ready 时不提供 partial 结果。运行时 cache 不进入 Git index，rebuild 也不把它复制进核心 workspace。
 
 ---
 
@@ -523,8 +528,8 @@ status 和 search 只检查本地状态。显式 reindex 完整生成 cache 后�
 
 | 设计项 | 代码落点 |
 |-|-|
-| canonical Raw 注解与 rebuild promotion | `compiler.py` |
-| annotation hash 与确定性 body sections | `chunking.py` |
+| V2.4 Raw 注解与 rebuild promotion | `compiler.py` |
+| 独立全局／逐 Raw 指纹与确定性 body chunks | `vectors.py` |
 | 固定 embedding spec 与 text-free cache | `embedding.py`、`vectors.py` |
 | keyword 不变与 supplemental 回切 | `retriever.py` |
 | journal recovery 与 cache/core promotion | `transaction.py` |
@@ -540,14 +545,16 @@ status 和 search 只检查本地状态。显式 reindex 完整生成 cache 后�
     second-memory vectors status --json
     second-memory vectors search --query "睡眠拖延" --json
     second-memory vectors reindex --offline --json
+    second-memory vectors reindex --force --json
     second-memory vectors evaluate --gold .kb/eval/vector-gold.jsonl --json
 
 验收必须同时证明：
 
-1. Apply 前后 Raw body hash 不变，canonical 注解和 `annotation_hash` 已落盘。
+1. Apply 前后 Raw body hash 不变，Raw 与主 manifest 不出现 `summary_segments`、`body_groups`、`body_sections` 或向量指纹等专用字段。
 2. 向量 enabled／disabled 或任意非 ready 状态下，keyword candidates／hits 结构和值保持一致。
 3. local-only 模型缺失时核心 Apply 仍成功，cache 明确降级且不安装 partial。
 4. ready cache 的每个 unit locator 都能回切到对应 Raw 文本；cache 文件不含全文字段且不被 Git 跟踪。
-5. rebuild 最终只 reindex 一次；cleanup 失败后状态已 complete，不会重复 finalize、commit 或 reindex。
-6. Topic vector evidence 只提供候选证据，不自动改变 membership、action 或 edge。
-7. evaluation 不改写知识库；报告中的排名证据有固定上限，指标仍按完整排名计算。
+5. 全局指纹变化会全量重算；指纹一致且仅少量 Raw 缺失或失效时只嵌入对应 Raw，并逐字节复用其他 JSONL。
+6. rebuild 最终只协调向量一次；cleanup 失败后状态已 complete，不会重复 finalize、commit 或 reindex。
+7. Topic vector evidence 只提供候选证据，不自动改变 membership、action 或 edge。
+8. evaluation 不改写知识库；报告中的排名证据有固定上限，指标仍按完整排名计算。

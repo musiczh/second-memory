@@ -857,18 +857,17 @@ class TopicVectorSupportRequestTest(RepositoryTestCase):
     def test_skill_raw_annotation_requiredness_matches_compile_schema(self) -> None:
         protocol = (Path(__file__).parents[1] / "SKILL.md").read_text(encoding="utf-8")
 
-        self.assertIn("`body_groups` key is required and may be `[]`", protocol)
         self.assertIn("`emotion` is optional and may be omitted", protocol)
         for field in [
             "`summary`",
-            "`summary_segments`",
             "`importance`",
             "`mentions`",
             "`occurrences`",
             "`claims`",
-            "`body_groups`",
         ]:
             self.assertIn(field, protocol)
+        self.assertIn("Do not return vector-only segmentation fields", protocol)
+        self.assertNotIn("`body_groups` key is required", protocol)
 
 
 if __name__ == "__main__":

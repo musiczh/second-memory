@@ -121,7 +121,7 @@ class WikiTest(RepositoryTestCase):
         self.assertIn("排除边界", template)
         self.assertNotIn("animation: enter", template)
 
-    def test_raw_summary_presentation_uses_headline_and_ordered_segments(self) -> None:
+    def test_legacy_vector_segments_do_not_change_compiled_raw_presentation(self) -> None:
         frontmatter.write_document(self.repo / "raw" / "2026" / "08" / "raw-segments.md", {
             "id": "raw-segments",
             "type": "raw",
@@ -137,10 +137,11 @@ class WikiTest(RepositoryTestCase):
         raw = model["raws"]["raw-segments"]
 
         self.assertEqual("独立 headline 摘要", raw["headline"])
-        self.assertEqual(["第一段扫描摘要", "第二段扫描摘要"], raw["summary_segments"])
-        self.assertTrue(raw["summary_segments_explicit"])
+        self.assertEqual(["独立 headline 摘要"], raw["summary_segments"])
+        self.assertFalse(raw["summary_segments_explicit"])
         static_html = render_html(model).split('<script type="application/json"', 1)[0]
-        self.assertLess(static_html.index("第一段扫描摘要"), static_html.index("第二段扫描摘要"))
+        self.assertNotIn("第一段扫描摘要", static_html)
+        self.assertNotIn("第二段扫描摘要", static_html)
         self.assertEqual(1, static_html.count("独立 headline 摘要"))
 
     def test_legacy_raw_summary_falls_back_once_without_duplication(self) -> None:
