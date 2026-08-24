@@ -736,8 +736,12 @@ class TopicVectorSupportRequestTest(RepositoryTestCase):
         score_rows = {
             self.topic_query: [("chunk-shared", 0.95), ("chunk-shared", 0.40), ("chunk-topic-2", 0.85)],
             self.bounded_queries[0]: [("chunk-q0-0", 0.90), ("chunk-q0-1", 0.50), ("chunk-q0-2", 0.10)],
-            self.bounded_queries[1]: [("chunk-q1-0", 0.80), ("chunk-q1-1", 0.70), ("chunk-q1-2", 0.60)],
-            self.bounded_queries[2]: [("chunk-q2-0", 0.99), ("chunk-q2-1", 0.30), ("chunk-q2-2", 0.20)],
+            self.bounded_queries[1]: [
+                ("chunk-q1-0", 0.80), ("chunk-q1-1", 0.70), ("chunk-q1-2", 0.60), ("chunk-q1-3", 0.05),
+            ],
+            self.bounded_queries[2]: [
+                ("chunk-q2-0", 0.99), ("chunk-q2-1", 0.30), ("chunk-q2-2", 0.20), ("chunk-q2-3", 0.04),
+            ],
             self.bounded_queries[3]: [("chunk-q3-0", 0.88), ("chunk-q3-1", 0.87), ("chunk-q3-2", 0.86)],
         }
 
@@ -768,7 +772,7 @@ class TopicVectorSupportRequestTest(RepositoryTestCase):
         ), patch("second_memory.compiler.search_vectors", side_effect=scored_units):
             catalog = build_topic_request(self.repo)["context"]["vector_support_catalog"]
 
-        self.assertEqual(10, len(catalog["entries"]))
+        self.assertEqual(15, len(catalog["entries"]))
         self.assertEqual(
             [
                 "chunk-q2-0",
@@ -781,6 +785,11 @@ class TopicVectorSupportRequestTest(RepositoryTestCase):
                 "chunk-q1-0",
                 "chunk-q1-1",
                 "chunk-q1-2",
+                "chunk-q0-1",
+                "chunk-q2-1",
+                "chunk-q2-2",
+                "chunk-q0-2",
+                "chunk-q1-3",
             ],
             [entry["locator"]["chunk_id"] for entry in catalog["entries"]],
         )

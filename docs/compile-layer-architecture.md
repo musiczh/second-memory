@@ -487,6 +487,8 @@ rebuild 是对正常入库链路的确定性重放，不是旧编译页的数据
 
 `search_level1` 先按既有规则产生 keyword candidates 与 hits，再把向量结果放入独立的 `supplemental_raw`。向量开关、cache 非 ready、本地模型缺失或 Raw 元数据回切失败都不得改变 keyword 候选和命中的值与顺序。失败的 supplemental 输出明确 `status/reason` 且 `units/raws` 为空，不泄漏部分证据。
 
+向量召回先扫描 45 个候选，再按 `score >= 0.58` 过滤；同一 Raw 内规范化文本相同的 headline／summary／body 单元只保留一个，同一 Raw 最多保留 3 个单元，最终按 score 与稳定 tie-break 返回最多 15 个单元。不同 Raw 的相同文本仍视为独立证据，不做跨 Raw 去重；达标结果不足 15 个时返回实际数量，不使用低分结果补齐。
+
 ready 结果只返回 config 限制内的 top unit locator、短 snippet、score 和有界 Raw 元数据。`vector_raw_limit=0` 明确表示不返回 Raw aggregate。Topic／Consolidation 只能把这些命中用作已有 organizing question 的候选证据；不得由向量命中自动修改 membership、action、edge 或 `belongs_to`。
 
 ### 5.4 事务与重建

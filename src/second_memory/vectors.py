@@ -5,13 +5,14 @@ import json
 import math
 import os
 import shutil
+import unicodedata
 import uuid
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 from .chunking import annotation_hash
-from .config import VECTOR_CONFIG_KEYS, load_config
+from .config import VECTOR_CACHE_CONFIG_KEYS, load_config
 from .embedding import EmbeddingProvider, EmbeddingSpec, FastEmbedProvider
 from .models import RawEntry
 from .utils import sha256_text
@@ -274,7 +275,12 @@ def search_vectors(
     candidates.sort(key=lambda unit: (-float(unit.score or 0.0), unit.chunk_id))
     scanned = candidates[: int(config["vector_scan_k"])]
     qualified = [unit for unit in scanned if float(unit.score or 0.0) >= float(config["vector_min_score"])]
-    units = qualified[: int(config["vector_unit_limit"])]
+    deduplicated = _deduplicate_units_within_raw(qualified)
+    units = _limit_units_per_raw(
+        deduplicated,
+        per_raw_limit=int(config["vector_units_per_raw_limit"]),
+        unit_limit=int(config["vector_unit_limit"]),
+    )
     raws: list[dict[str, Any]] = []
     raw_limit = int(config["vector_raw_limit"])
     if raw_limit <= 0:
@@ -296,6 +302,48 @@ def search_vectors(
         if len(raws) == raw_limit:
             break
     return VectorSearchResult("ready", "vector cache is ready", units, raws)
+
+
+def _deduplicate_units_within_raw(units: Sequence[VectorUnit]) -> list[VectorUnit]:
+    selected: dict[tuple[str, str], VectorUnit] = {}
+    kind_priority = {"headline": 0, "summary": 1, "body": 2}
+    for unit in units:
+        key = (unit.raw_id, _normalized_unit_text(unit.text))
+        existing = selected.get(key)
+        if existing is None:
+            selected[key] = unit
+            continue
+        unit_rank = (float(unit.score or 0.0), kind_priority[unit.kind])
+        existing_rank = (float(existing.score or 0.0), kind_priority[existing.kind])
+        if unit_rank > existing_rank or (unit_rank == existing_rank and unit.chunk_id < existing.chunk_id):
+            selected[key] = unit
+    return sorted(selected.values(), key=lambda unit: (-float(unit.score or 0.0), unit.chunk_id))
+
+
+def _normalized_unit_text(text: str) -> str:
+    return " ".join(unicodedata.normalize("NFKC", text).split())
+
+
+def _limit_units_per_raw(
+    units: Sequence[VectorUnit],
+    *,
+    per_raw_limit: int,
+    unit_limit: int,
+) -> list[VectorUnit]:
+    if per_raw_limit < 1:
+        raise VectorCacheError("vector units per Raw limit must be positive")
+    if unit_limit < 1:
+        raise VectorCacheError("vector unit limit must be positive")
+    selected: list[VectorUnit] = []
+    counts: dict[str, int] = {}
+    for unit in units:
+        if counts.get(unit.raw_id, 0) >= per_raw_limit:
+            continue
+        selected.append(unit)
+        counts[unit.raw_id] = counts.get(unit.raw_id, 0) + 1
+        if len(selected) == unit_limit:
+            break
+    return selected
 
 
 def _chunk_offsets(
@@ -761,7 +809,7 @@ def _spec_fingerprint(spec: EmbeddingSpec) -> str:
 
 
 def _config_fingerprint(config: dict[str, Any]) -> str:
-    return _fingerprint({key: config.get(key) for key in VECTOR_CONFIG_KEYS})
+    return _fingerprint({key: config.get(key) for key in VECTOR_CACHE_CONFIG_KEYS})
 
 
 def _fingerprint(value: object) -> str:

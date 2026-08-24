@@ -79,6 +79,7 @@ class VectorRepositoryTest(unittest.TestCase):
         raws: list[tuple[str, str]],
         *,
         body_groups: dict[str, list[list[str]]] | None = None,
+        duplicate_summary: bool = False,
     ) -> list[str]:
         raw_ids = [str(add_raw(self.repo, title, body, "2026-08-20", ["test"])["raw_id"]) for title, body in raws]
         request = build_compile_request(self.repo, mode="incremental")
@@ -86,6 +87,8 @@ class VectorRepositoryTest(unittest.TestCase):
         for entry in request["context"]["raw_entries"]:
             label = str(entry["title"])
             fields = raw_annotation_fields(label)
+            if duplicate_summary:
+                fields["summary_segments"] = [fields["summary"]]
             annotations.append({
                 "raw_id": entry["id"],
                 "summary": fields["summary"],
@@ -532,20 +535,22 @@ class VectorRepositoryTest(unittest.TestCase):
         result = search_vectors(self.repo, "排序查询", provider)
 
         self.assertEqual("ready", result.status)
-        self.assertEqual(10, len(result.units))
+        self.assertEqual(15, len(result.units))
         self.assertLessEqual(len(result.raws), 5)
         self.assertEqual(sorted((unit.chunk_id for unit in result.units)), [unit.chunk_id for unit in result.units])
-        self.assertTrue(all(unit.score >= 0.35 for unit in result.units))
+        self.assertTrue(all(unit.score >= 0.58 for unit in result.units))
         self.assertNotIn(raw_ids[5], {unit.raw_id for unit in result.units})
         self.assertEqual(len(result.raws), len({item["raw_id"] for item in result.raws}))
         self.assertEqual([item["raw_id"] for item in result.raws], list(dict.fromkeys(unit.raw_id for unit in result.units))[:5])
 
-    def test_search_orders_distinct_scores_before_the_thirty_unit_scan_limit(self) -> None:
-        markers = [f"分数{i:02d}" for i in range(12)]
+    def test_search_orders_distinct_scores_before_the_forty_five_unit_scan_limit(self) -> None:
+        markers = [f"分数{i:02d}" for i in range(20)]
         self.compile_raws([(marker, marker + "正文内容" * 15) for marker in markers])
         config = load_config(self.repo)
-        config["vector_unit_limit"] = 40
-        config["vector_raw_limit"] = 40
+        config["vector_min_score"] = 0.0
+        config["vector_unit_limit"] = 60
+        config["vector_units_per_raw_limit"] = 60
+        config["vector_raw_limit"] = 60
         write_config(self.repo, config)
         scores = {marker: 0.99 - index * 0.04 for index, marker in enumerate(markers)}
         provider = FakeProvider(scores)
@@ -555,7 +560,7 @@ class VectorRepositoryTest(unittest.TestCase):
 
         actual_scores = [float(unit.score or 0.0) for unit in result.units]
         self.assertEqual("ready", result.status)
-        self.assertEqual(30, len(result.units))
+        self.assertEqual(45, len(result.units))
         self.assertEqual(sorted(actual_scores, reverse=True), actual_scores)
         self.assertGreater(actual_scores[0], actual_scores[-1])
         for score in set(actual_scores):
@@ -565,7 +570,7 @@ class VectorRepositoryTest(unittest.TestCase):
     def test_ablation_filters_body_before_scan_threshold_and_unit_limits(self) -> None:
         raw_ids = self.compile_raws([
             (f"消融原料{index:02d}", f"消融原料{index:02d}" + "正文" * 180)
-            for index in range(17)
+            for index in range(27)
         ])
         relevant_raw_id = raw_ids[-1]
         config = load_config(self.repo)
@@ -592,7 +597,7 @@ class VectorRepositoryTest(unittest.TestCase):
         baseline = search_vectors(self.repo, "消融查询", provider)
         ablated = search_vectors(self.repo, "消融查询", provider, disabled_unit_types={"body"})
 
-        self.assertEqual(10, len(baseline.units))
+        self.assertEqual(15, len(baseline.units))
         self.assertTrue(all(unit.kind == "body" for unit in baseline.units))
         self.assertNotIn(relevant_raw_id, {unit.raw_id for unit in baseline.units})
         self.assertEqual(relevant_raw_id, ablated.units[0].raw_id)
@@ -608,7 +613,13 @@ class VectorRepositoryTest(unittest.TestCase):
                 search_vectors(self.repo, "查询", disabled_unit_types={"title"})
 
     def test_destination_build_is_complete_and_does_not_replace_the_live_cache(self) -> None:
+        config = load_config(self.repo)
+        config["vector_enabled"] = False
+        write_config(self.repo, config)
         self.compile_raws([("目标目录", "目标目录正文" * 12)])
+        config = load_config(self.repo)
+        config["vector_enabled"] = True
+        write_config(self.repo, config)
         provider = FakeProvider()
         destination = self.repo / ".kb/transaction/vectors.next"
 
@@ -618,6 +629,98 @@ class VectorRepositoryTest(unittest.TestCase):
         self.assertTrue((destination / "manifest.json").is_file())
         self.assertFalse((self.repo / ".kb/vectors").exists())
         self.assertEqual("ready", vector_status(self.repo, destination=destination).status)
+
+    def test_search_deduplicates_normalized_text_only_within_the_same_raw(self) -> None:
+        raw_ids = self.compile_raws([
+            ("重复甲", "重复甲正文内容" * 20),
+            ("重复乙", "重复乙正文内容" * 20),
+        ], duplicate_summary=True)
+        config = load_config(self.repo)
+        config.update({
+            "vector_min_score": 0.0,
+            "vector_scan_k": 45,
+            "vector_unit_limit": 15,
+            "vector_units_per_raw_limit": 15,
+            "vector_raw_limit": 15,
+        })
+        write_config(self.repo, config)
+        provider = FakeProvider()
+        reindex_vectors(self.repo, provider)
+
+        result = search_vectors(self.repo, "重复", provider)
+
+        for raw_id in raw_ids:
+            duplicate_kinds = [
+                unit.kind
+                for unit in result.units
+                if unit.raw_id == raw_id and unit.text == self.raw_entry(raw_id).annotations["summary"]
+            ]
+            self.assertEqual(["summary"], duplicate_kinds)
+
+    def test_search_applies_score_boundary_and_does_not_backfill_below_threshold(self) -> None:
+        raw_ids = self.compile_raws([
+            ("边界保留", "边界保留正文内容" * 180),
+            ("边界过滤", "边界过滤正文内容" * 180),
+        ])
+        config = load_config(self.repo)
+        config.update({
+            "vector_min_score": 0.58,
+            "vector_scan_k": 45,
+            "vector_unit_limit": 15,
+            "vector_units_per_raw_limit": 3,
+            "vector_raw_limit": 15,
+        })
+        write_config(self.repo, config)
+        provider = FakeProvider({"边界保留": 0.58, "边界过滤": 0.579})
+        reindex_vectors(self.repo, provider)
+
+        result = search_vectors(self.repo, "边界", provider)
+
+        self.assertEqual({raw_ids[0]}, {unit.raw_id for unit in result.units})
+        self.assertEqual(3, len(result.units))
+        self.assertTrue(all(float(unit.score or 0.0) >= 0.58 for unit in result.units))
+
+    def test_search_returns_top_fifteen_with_at_most_three_units_per_raw(self) -> None:
+        self.compile_raws([
+            (f"日常输入{index:02d}", f"日常输入{index:02d}" + "正文内容" * 180)
+            for index in range(6)
+        ])
+        config = load_config(self.repo)
+        config.update({
+            "vector_min_score": 0.58,
+            "vector_scan_k": 45,
+            "vector_unit_limit": 15,
+            "vector_units_per_raw_limit": 3,
+            "vector_raw_limit": 15,
+        })
+        write_config(self.repo, config)
+        provider = FakeProvider()
+        reindex_vectors(self.repo, provider)
+
+        result = search_vectors(self.repo, "日常问题", provider)
+
+        counts: dict[str, int] = {}
+        for unit in result.units:
+            counts[unit.raw_id] = counts.get(unit.raw_id, 0) + 1
+        self.assertEqual(15, len(result.units))
+        self.assertTrue(all(count <= 3 for count in counts.values()))
+        self.assertGreaterEqual(len(counts), 5)
+
+    def test_query_time_limit_changes_do_not_make_the_vector_cache_stale(self) -> None:
+        self.compile_raws([("查询配置", "查询配置正文内容" * 20)])
+        provider = FakeProvider()
+        reindex_vectors(self.repo, provider)
+        config = load_config(self.repo)
+        config.update({
+            "vector_min_score": 0.61,
+            "vector_scan_k": 60,
+            "vector_unit_limit": 20,
+            "vector_units_per_raw_limit": 4,
+            "vector_raw_limit": 7,
+        })
+        write_config(self.repo, config)
+
+        self.assertEqual("ready", vector_status(self.repo).status)
 
     def test_destination_delta_reembeds_selected_raw_and_reuses_other_valid_jsonl(self) -> None:
         raw_ids = self.compile_raws([("增量甲", "增量甲正文" * 12), ("增量乙", "增量乙正文" * 12)])

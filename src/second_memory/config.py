@@ -22,9 +22,10 @@ VECTOR_DEFAULTS: dict[str, Any] = {
     "vector_provider": "fastembed",
     "vector_model": "BAAI/bge-small-zh-v1.5",
     "vector_dimension": 512,
-    "vector_min_score": 0.35,
-    "vector_scan_k": 30,
-    "vector_unit_limit": 10,
+    "vector_min_score": 0.58,
+    "vector_scan_k": 45,
+    "vector_unit_limit": 15,
+    "vector_units_per_raw_limit": 3,
     "vector_raw_limit": 5,
     "vector_chunk_target": 300,
     "vector_chunk_min": 50,
@@ -32,6 +33,15 @@ VECTOR_DEFAULTS: dict[str, Any] = {
     "vector_chunk_overlap": 0.15,
 }
 VECTOR_CONFIG_KEYS = tuple(VECTOR_DEFAULTS)
+VECTOR_CACHE_CONFIG_KEYS = (
+    "vector_provider",
+    "vector_model",
+    "vector_dimension",
+    "vector_chunk_target",
+    "vector_chunk_min",
+    "vector_chunk_max",
+    "vector_chunk_overlap",
+)
 
 
 def default_repo_for_scope(scope: str = "shared", agent: str | None = None) -> Path:

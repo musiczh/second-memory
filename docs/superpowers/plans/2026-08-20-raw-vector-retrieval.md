@@ -150,7 +150,7 @@ git commit -m "feat(vector): 接入本地 FastEmbed Provider" -m "锁定 fastemb
 - chunk ID 在相同输入下稳定；summary 单元使用 `segment_index`，body 单元使用 `start/end`，JSONL 不重复正文。
 - manifest 记录 schema、provider/model/model hash/spec fingerprint、输入 annotation/body hash、raw 文件指纹与计数。
 - 任一 JSONL 缺失、损坏、维度不匹配、输入 hash 或配置不一致时，整体状态分别为 `missing/corrupt/stale`，且不返回部分结果。
-- query 结果按 score 降序、chunk_id 升序稳定排序；先 scan 30，再 threshold 0.35，再 unit 最多 10、Raw 去重最多 5。
+- query 结果按 score 降序、chunk_id 升序稳定排序；先 scan 45，再执行 `score >= 0.58`、同 Raw 精确文本去重和每 Raw 最多 3 个 unit，最终 unit 最多 15、Raw aggregate 最多 5。
 - disabled／pending／stale／corrupt 时结果为明确状态和 reason，`units/raws` 均为空。
 
 运行：
