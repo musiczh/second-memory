@@ -417,15 +417,15 @@ class VectorRepositoryTest(unittest.TestCase):
         self.assertEqual([], search_vectors(self.repo, "查询", FakeProvider()).raws)
         self.assertIn(raw_id, load_manifest(self.repo)["compiled_raw"])
 
-    def test_ready_cache_with_missing_local_model_degrades_without_calling_query(self) -> None:
+    def test_ready_cache_degrades_when_model_download_fails(self) -> None:
         self.compile_raws([("本地模型", "本地模型正文" * 10)])
         reindex_vectors(self.repo, FakeProvider())
 
-        with patch("second_memory.vectors.FastEmbedProvider", side_effect=RuntimeError("local model missing")):
+        with patch("second_memory.vectors.FastEmbedProvider", side_effect=RuntimeError("model download failed")):
             result = search_vectors(self.repo, "查询")
 
         self.assertEqual("pending", result.status)
-        self.assertIn("local model", result.reason)
+        self.assertIn("model download failed", result.reason)
         self.assertEqual([], result.units)
         self.assertEqual([], result.raws)
 
@@ -436,16 +436,33 @@ class VectorRepositoryTest(unittest.TestCase):
 
         with patch("second_memory.vectors.FastEmbedProvider", return_value=FakeProvider()) as constructor:
             reindex_vectors(self.repo, offline=True, destination=offline_destination)
-        constructor.assert_called_once_with(local_files_only=True)
+        constructor.assert_called_once_with(
+            local_files_only=True,
+            cache_dir=self.repo / ".kb/models",
+        )
 
         with patch("second_memory.vectors.FastEmbedProvider", return_value=FakeProvider()) as constructor:
             reindex_vectors(self.repo, destination=online_destination)
-        constructor.assert_called_once_with(local_files_only=False)
+        constructor.assert_called_once_with(
+            local_files_only=False,
+            cache_dir=self.repo / ".kb/models",
+        )
 
         reindex_vectors(self.repo, FakeProvider())
         with patch("second_memory.vectors.FastEmbedProvider", return_value=FakeProvider()) as constructor:
             result = search_vectors(self.repo, "查询")
-        constructor.assert_called_once_with(local_files_only=True)
+        constructor.assert_called_once_with(
+            local_files_only=False,
+            cache_dir=self.repo / ".kb/models",
+        )
+        self.assertEqual("ready", result.status)
+
+        with patch("second_memory.vectors.FastEmbedProvider", return_value=FakeProvider()) as constructor:
+            result = search_vectors(self.repo, "查询", offline=True)
+        constructor.assert_called_once_with(
+            local_files_only=True,
+            cache_dir=self.repo / ".kb/models",
+        )
         self.assertEqual("ready", result.status)
 
     def test_offline_reindex_fails_without_a_local_model_and_keeps_destination_absent(self) -> None:
@@ -459,7 +476,10 @@ class VectorRepositoryTest(unittest.TestCase):
             with self.assertRaisesRegex(EmbeddingError, "local model missing"):
                 reindex_vectors(self.repo, offline=True, destination=destination)
 
-        constructor.assert_called_once_with(local_files_only=True)
+        constructor.assert_called_once_with(
+            local_files_only=True,
+            cache_dir=self.repo / ".kb/models",
+        )
         self.assertFalse(destination.exists())
 
     def test_search_uses_stable_score_order_then_limits_units_and_deduplicates_raws(self) -> None:
@@ -805,6 +825,7 @@ class VectorRepositoryTest(unittest.TestCase):
 
     def test_default_gitignore_excludes_vector_and_evaluation_caches(self) -> None:
         self.assertIn(".kb/vectors/\n", DEFAULT_GITIGNORE)
+        self.assertIn(".kb/models/\n", DEFAULT_GITIGNORE)
         self.assertIn(".kb/eval/\n", DEFAULT_GITIGNORE)
         self.assertEqual(DEFAULT_GITIGNORE, (self.repo / ".gitignore").read_text(encoding="utf-8"))
 
@@ -818,6 +839,7 @@ class VectorRepositoryTest(unittest.TestCase):
         content = (repo / ".gitignore").read_text(encoding="utf-8")
         self.assertTrue(content.startswith("user-cache/\n"))
         self.assertIn(".kb/vectors/\n", content)
+        self.assertIn(".kb/models/\n", content)
         self.assertIn(".kb/eval/\n", content)
 
 

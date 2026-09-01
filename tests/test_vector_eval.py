@@ -344,7 +344,7 @@ class EvaluationReportTest(unittest.TestCase):
                 with self.assertRaisesRegex(VectorEvaluationError, "vector cache is not ready: stale: Raw input changed"):
                     evaluate_repository(Path(temporary), path)
 
-    def test_repository_evaluation_forwards_ablation_to_online_search_before_evaluation(self) -> None:
+    def test_repository_evaluation_forwards_ablation_to_offline_search_before_evaluation(self) -> None:
         raw_id = "raw-20260820-1200-0123abcd"
         with tempfile.TemporaryDirectory(prefix="second-memory-vector-eval-forward-") as temporary:
             repo = Path(temporary)
@@ -364,9 +364,9 @@ class EvaluationReportTest(unittest.TestCase):
             ) as search:
                 evaluate_repository(repo, path, disabled_unit_types={"body"})
 
-        search.assert_called_once_with(repo, "睡眠", disabled_unit_types={"body"})
+        search.assert_called_once_with(repo, "睡眠", disabled_unit_types={"body"}, offline=True)
 
-    def test_search_level1_forwards_ablation_to_vector_search(self) -> None:
+    def test_search_level1_forwards_ablation_and_offline_mode_to_vector_search(self) -> None:
         with tempfile.TemporaryDirectory(prefix="second-memory-vector-eval-retriever-") as temporary:
             repo = Path(temporary) / "knowledge-base"
             initialize(repo, "agent", "test", "plain")
@@ -374,9 +374,9 @@ class EvaluationReportTest(unittest.TestCase):
                 "second_memory.retriever.search_vectors",
                 return_value=VectorSearchResult("ready", "vector cache is ready", [], []),
             ) as vector_search:
-                search_level1(repo, "睡眠", disabled_unit_types={"body"})
+                search_level1(repo, "睡眠", disabled_unit_types={"body"}, offline=True)
 
-        vector_search.assert_called_once_with(repo, "睡眠", disabled_unit_types={"body"})
+        vector_search.assert_called_once_with(repo, "睡眠", disabled_unit_types={"body"}, offline=True)
 
 
 class EvaluationCliTest(unittest.TestCase):

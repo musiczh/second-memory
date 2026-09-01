@@ -47,7 +47,7 @@ incremental staging：vectors.next + Wiki + V2.4 Raw annotation + manifest
 Raw-only rebuild 的边界不同：workspace 核心投影先完成 promotion 和 Git commit；提交成功后才执行一次 `offline=True` 的向量协调。全局指纹兼容时只重建输入发生变化的 Raw；指纹不兼容时才全量 reindex。该操作是 best-effort，失败只返回向量降级状态，不回滚已经提交的 rebuild 核心结果。
 
 - 核心知识仍以不可变 Raw 和可审计编译投影为准；`.kb/vectors/` 是 Git 忽略、可删除重建的辅助缓存。
-- 普通 Apply、search、status 只允许使用本地模型；只有显式 `vectors reindex` 可以进入模型下载边界。缓存非 ready 时，检索输出和 Topic／Consolidation 请求返回明确 `status/reason` 与空向量结果，不能阻断核心工作流。
+- 普通 Apply 与 status 只使用本地模型；search 和显式 `vectors reindex` 缺模型时可下载，`vectors reindex --offline` 保持本地只读。缓存非 ready 时，检索输出和 Topic／Consolidation 请求返回明确 `status/reason` 与空向量结果，不能阻断核心工作流。
 - `search_level1` 的关键词／图谱候选、分数和顺序保持不变，向量结果只追加到 `supplemental_raw`。Level 2 只携带 top unit locator、短 snippet 和有界 Raw 元数据，不发送整篇 Raw。
 - Topic／Consolidation 的 `vector_support_catalog` 只对已有 topic contract 或稳定 topic candidate 中显式保存的 `organizing_question` 做有界检索。相同问题只搜索一次并聚合稳定 `source_refs`；唯一 query 最多 `vector_raw_limit` 条，catalog entry 全局最多 `vector_unit_limit` 条。不存在持久化问题时返回空目录；Host Agent 提出全新组织问题时，先显式执行 `second-memory vectors search`。
 - 向量命中只提供 `query`、来源 `source_refs`、`raw_id`、locator、短 snippet、score 与 cache status。相同 `(query, chunk_id)` 去重后按 score 和稳定 tie-break 全局排序。它不进入 `member_catalog/raw_catalog`，不自动产生成员、action、edge 或 `belongs_to`；成员仍须逐项通过 V2.4 TopicContract。
@@ -476,7 +476,7 @@ rebuild 是对正常入库链路的确定性重放，不是旧编译页的数据
 
 ### 5.2 模型与缓存协议
 
-唯一 provider 是 FastEmbed，运行时固定为 CPU `onnxruntime-cpu`、`float32`、L2 normalized；provider、model、dimension 来自受支持的 vector config，model hash 必须是 64 位小写 SHA-256。普通 Apply、search、status、update 只使用本地模型，不触发下载；只有用户显式执行 `second-memory vectors reindex` 时才可进入下载边界，`--offline` 则强制只读本地 cache。
+唯一 provider 是 FastEmbed，运行时固定为 CPU `onnxruntime-cpu`、`float32`、L2 normalized；provider、model、dimension 来自受支持的 vector config，model hash 必须是 64 位小写 SHA-256。模型持久化在知识库的 `.kb/models/`。search 与普通 `second-memory vectors reindex` 缺模型时允许下载；`--offline`、普通 Apply、status 与 update 只读取本地模型。
 
 `.kb/vectors/` 是 Git-ignored supplemental cache。manifest 与 spec 使用固定 exact-key schema；每条 Raw 的 JSONL 只保存 locator、input hashes 和 vector，不保存 body、snippet、text 或其他未知字段。全局指纹覆盖 `VECTOR_CACHE_SCHEMA`、embedding spec／模型哈希、维度和影响缓存的分块配置；这些任一项变化时旧向量整体不可复用。
 
@@ -520,7 +520,7 @@ Raw-only rebuild 的 workspace 不构建向量。核心最终提交后才执行�
 | `stale` | config、全局指纹或某个 Raw 输入变化 | fail-closed，不返回 partial；维护时按 full／incremental 计划处理 |
 | `corrupt` | schema、hash、文件、vector 或 locator 无法完整验证 | fail-closed，不返回 partial |
 
-status 和 search 只检查本地状态。reindex 生成完整目标 cache manifest，复用兼容文件并只嵌入计划中的 Raw，随后原子切换并做整体状态校验；非 ready 时不提供 partial 结果。运行时 cache 不进入 Git index，rebuild 也不把它复制进核心 workspace。
+status 只检查本地状态；search 在 cache ready 后按需下载缺失模型。reindex 生成完整目标 cache manifest，复用兼容文件并只嵌入计划中的 Raw，随后原子切换并做整体状态校验；非 ready 时不提供 partial 结果。运行时 cache 不进入 Git index，rebuild 也不把它复制进核心 workspace。
 
 ---
 
