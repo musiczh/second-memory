@@ -258,7 +258,7 @@ def evaluate_repository(
         raise GoldValidationError("gold references Raw IDs outside the ready vector cache: " + ", ".join(unknown_raw_ids))
     report = evaluate_gold(
         gold,
-        lambda query: search_level1(repo, query, disabled_unit_types=disabled_unit_types),
+        lambda query: search_level1(repo, query, disabled_unit_types=disabled_unit_types, offline=True),
         disabled_unit_types=disabled_unit_types,
     )
     return {

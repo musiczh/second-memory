@@ -587,13 +587,33 @@ class GitKnowledgeVectorRecoveryTest(VectorTestRepository):
 class IncrementalVectorApplyTest(VectorTestRepository):
     backend = "git"
 
+    def test_incremental_apply_reuses_database_model_cache(self) -> None:
+        model_cache = self.repo / ".kb/models"
+        model_cache.mkdir()
+        _, plan = self.add_plan("数据库模型", "数据库模型缓存应被增量向量构建复用" * 20)
+        cache_dirs: list[Path] = []
+
+        def provider(*, local_files_only: bool, cache_dir: Path) -> FakeProvider:
+            self.assertTrue(local_files_only)
+            cache_dirs.append(cache_dir.resolve())
+            return FakeProvider()
+
+        with patch("second_memory.vectors.FastEmbedProvider", side_effect=provider):
+            result = apply_response(self.repo, plan, command="compile")
+
+        self.assertEqual("ready", result["vector_status"])
+        self.assertEqual([model_cache.resolve()], cache_dirs)
+
     def test_incremental_apply_builds_only_changed_raw_and_commits_no_cache_path(self) -> None:
         first_body = "第一条原料的独特正文" * 20
         _, first_plan = self.add_plan("第一条原料", first_body)
         first_provider = FakeProvider(axis=0)
         with patch("second_memory.vectors.FastEmbedProvider", return_value=first_provider) as constructor:
             first_result = apply_response(self.repo, first_plan, command="compile")
-        constructor.assert_called_once_with(local_files_only=True)
+        constructor.assert_called_once_with(
+            local_files_only=True,
+            cache_dir=self.repo / ".kb/transaction/vector-input/.kb/models",
+        )
         self.assertEqual("ready", first_result["vector_status"])
 
         second_body = "第二条原料的独特正文" * 20
@@ -602,7 +622,10 @@ class IncrementalVectorApplyTest(VectorTestRepository):
         with patch("second_memory.vectors.FastEmbedProvider", return_value=second_provider) as constructor:
             result = apply_response(self.repo, second_plan, command="compile")
 
-        constructor.assert_called_once_with(local_files_only=True)
+        constructor.assert_called_once_with(
+            local_files_only=True,
+            cache_dir=self.repo / ".kb/transaction/vector-input/.kb/models",
+        )
         embedded = "".join(second_provider.passage_inputs[0])
         self.assertIn("第二条原料", embedded)
         self.assertNotIn("第一条原料的独特正文", embedded)
@@ -623,7 +646,10 @@ class IncrementalVectorApplyTest(VectorTestRepository):
         with patch("second_memory.vectors.FastEmbedProvider", side_effect=RuntimeError("local model missing")) as constructor:
             result = apply_response(self.repo, plan, command="compile")
 
-        constructor.assert_called_once_with(local_files_only=True)
+        constructor.assert_called_once_with(
+            local_files_only=True,
+            cache_dir=self.repo / ".kb/transaction/vector-input/.kb/models",
+        )
         self.assertEqual([raw_id], load_manifest(self.repo)["compiled_raw"])
         self.assertEqual([], read_pending(self.repo))
         self.assertEqual("pending", result["vector_status"])
@@ -805,7 +831,10 @@ class RawOnlyRebuildVectorTest(VectorTestRepository):
             tail_request = build_rebuild_request(self.repo)
             result = apply_rebuild_response(self.repo, self.consolidation_plan(tail_request))
 
-        constructor.assert_called_once_with(local_files_only=True)
+        constructor.assert_called_once_with(
+            local_files_only=True,
+            cache_dir=self.repo / ".kb/models",
+        )
         self.assertTrue(result["rebuild_complete"])
         self.assertEqual("ready", result["vector_status"])
         self.assertEqual("ready", vector_status(self.repo).status)

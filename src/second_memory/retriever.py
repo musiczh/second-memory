@@ -101,6 +101,7 @@ def search_level1(
     query: str,
     *,
     disabled_unit_types: set[str] | frozenset[str] = frozenset(),
+    offline: bool = False,
 ) -> dict[str, Any]:
     load_config(repo)
     terms = query_terms(query)
@@ -155,7 +156,7 @@ def search_level1(
     keyword_result = {"query": query, "candidates": candidates[:10], "hits": rg_hits(repo, query)}
     keyword_result["supplemental_raw"] = vector_supplement(
         repo,
-        search_vectors(repo, query, disabled_unit_types=disabled_unit_types),
+        search_vectors(repo, query, disabled_unit_types=disabled_unit_types, offline=offline),
     )
     return keyword_result
 

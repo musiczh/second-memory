@@ -52,9 +52,10 @@ class FastEmbedProvider:
         self,
         *,
         local_files_only: bool = True,
+        cache_dir: Path | None = None,
         backend: Any | None = None,
     ) -> None:
-        self._backend = backend or self._create_backend(local_files_only)
+        self._backend = backend or self._create_backend(local_files_only, cache_dir)
         resolved_model_path = _fastembed_v080_model_file(self._backend)
         self._spec = EmbeddingSpec(
             provider=self.PROVIDER,
@@ -84,7 +85,7 @@ class FastEmbedProvider:
         return vectors[0]
 
     @classmethod
-    def _create_backend(cls, local_files_only: bool) -> Any:
+    def _create_backend(cls, local_files_only: bool, cache_dir: Path | None) -> Any:
         try:
             from fastembed import TextEmbedding
         except ImportError as error:
@@ -92,6 +93,7 @@ class FastEmbedProvider:
         try:
             return TextEmbedding(
                 cls.MODEL,
+                cache_dir=str(cache_dir) if cache_dir is not None else None,
                 providers=["CPUExecutionProvider"],
                 local_files_only=local_files_only,
             )

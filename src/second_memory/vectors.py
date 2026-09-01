@@ -19,6 +19,7 @@ from .utils import sha256_text
 
 VECTOR_CACHE_SCHEMA = 2
 _CACHE_DIR = Path(".kb/vectors")
+_MODEL_DIR = Path(".kb/models")
 _MANIFEST_KEYS = {
     "schema", "provider", "model", "model_hash", "dimension", "spec",
     "spec_fingerprint", "config_fingerprint", "global_fingerprint", "input_fingerprint",
@@ -147,7 +148,10 @@ def reindex_vectors(
     config = load_config(repo)
     if not bool(config.get("vector_enabled", True)):
         return VectorCacheState("disabled", "vector retrieval is disabled")
-    embedding_provider = provider or FastEmbedProvider(local_files_only=offline)
+    embedding_provider = provider or FastEmbedProvider(
+        local_files_only=offline,
+        cache_dir=repo / _MODEL_DIR,
+    )
     _validate_spec_against_config(embedding_provider.spec, config)
 
     entries = _raw_lookup(repo)
@@ -314,6 +318,7 @@ def search_vectors(
     provider: EmbeddingProvider | None = None,
     *,
     disabled_unit_types: set[str] | frozenset[str] = frozenset(),
+    offline: bool = False,
 ) -> VectorSearchResult:
     unknown = set(disabled_unit_types) - {"headline", "summary", "body"}
     if unknown:
@@ -323,7 +328,10 @@ def search_vectors(
     if not state.ready or state.manifest is None:
         return VectorSearchResult(state.status, state.reason, [], [])
     try:
-        embedding_provider = provider or FastEmbedProvider(local_files_only=True)
+        embedding_provider = provider or FastEmbedProvider(
+            local_files_only=offline,
+            cache_dir=repo / _MODEL_DIR,
+        )
     except Exception as error:
         return VectorSearchResult("pending", f"local model is unavailable: {error}", [], [])
     if _spec_fingerprint(embedding_provider.spec) != state.manifest["spec_fingerprint"]:

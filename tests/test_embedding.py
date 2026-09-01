@@ -101,9 +101,10 @@ class EmbeddingProviderTest(unittest.TestCase):
         with self.assertRaisesRegex(EmbeddingError, "missing"):
             FastEmbedProvider(backend=missing_backend)
 
-    def test_fastembed_forces_cpu_local_only_and_uses_passage_and_query_apis(self) -> None:
+    def test_fastembed_uses_requested_cache_for_cpu_passage_and_query_apis(self) -> None:
         created: list[FakeTextEmbedding] = []
         model_dir = self.model_path.parent
+        cache_dir = model_dir / "model-cache"
 
         class FakeTextEmbedding(FakeBackend):
             def __init__(self, model_name: str, **kwargs: object) -> None:
@@ -114,13 +115,14 @@ class EmbeddingProviderTest(unittest.TestCase):
 
         fake_module = types.SimpleNamespace(TextEmbedding=FakeTextEmbedding)
         with patch.dict(sys.modules, {"fastembed": fake_module}):
-            provider = FastEmbedProvider(local_files_only=True)
+            provider = FastEmbedProvider(local_files_only=True, cache_dir=cache_dir)
 
         self.assertEqual(1, len(created))
         backend = created[0]
         self.assertEqual("BAAI/bge-small-zh-v1.5", backend.model_name)
         self.assertEqual(["CPUExecutionProvider"], backend.kwargs["providers"])
         self.assertTrue(backend.kwargs["local_files_only"])
+        self.assertEqual(str(cache_dir), backend.kwargs["cache_dir"])
         provider.embed_passages(["原料"])
         provider.embed_query("查询")
         self.assertEqual([["原料"]], backend.passage_inputs)

@@ -579,7 +579,8 @@ class TopicVectorSupportRequestTest(RepositoryTestCase):
         )
 
     @staticmethod
-    def _result(_repo: Path, query: str) -> VectorSearchResult:
+    def _result(_repo: Path, query: str, *, offline: bool) -> VectorSearchResult:
+        assert offline
         if query == TopicVectorSupportRequestTest.topic_query:
             return VectorSearchResult(
                 "ready",
@@ -667,6 +668,7 @@ class TopicVectorSupportRequestTest(RepositoryTestCase):
         self.assertIsNotNone(consolidation)
         expected_queries = [self.topic_query, self.candidate_query] * 2
         self.assertEqual(expected_queries, [call.args[1] for call in search.call_args_list])
+        self.assertTrue(all(call.kwargs == {"offline": True} for call in search.call_args_list))
         self.assertEqual(
             consolidation["context"]["vector_support_catalog"],
             topics["context"]["vector_support_catalog"],
@@ -694,7 +696,8 @@ class TopicVectorSupportRequestTest(RepositoryTestCase):
     def test_catalog_deduplicates_queries_and_aggregates_stable_source_refs_before_query_cap(self) -> None:
         self._add_bounded_query_sources()
 
-        def one_unit(_repo: Path, query: str) -> VectorSearchResult:
+        def one_unit(_repo: Path, query: str, *, offline: bool) -> VectorSearchResult:
+            self.assertTrue(offline)
             unit = VectorUnit(
                 chunk_id=f"chunk-{self.bounded_queries.index(query) if query in self.bounded_queries else 'shared'}",
                 raw_id="raw-vector-0",
@@ -745,7 +748,8 @@ class TopicVectorSupportRequestTest(RepositoryTestCase):
             self.bounded_queries[3]: [("chunk-q3-0", 0.88), ("chunk-q3-1", 0.87), ("chunk-q3-2", 0.86)],
         }
 
-        def scored_units(_repo: Path, query: str) -> VectorSearchResult:
+        def scored_units(_repo: Path, query: str, *, offline: bool) -> VectorSearchResult:
+            self.assertTrue(offline)
             units = [
                 VectorUnit(
                     chunk_id=chunk_id,

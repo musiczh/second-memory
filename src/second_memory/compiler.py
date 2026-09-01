@@ -71,6 +71,7 @@ DEFAULT_GITIGNORE = (
     ".kb/transaction.json\n"
     ".kb/transaction.json.tmp\n"
     ".kb/vectors/\n"
+    ".kb/models/\n"
     ".kb/eval/\n"
 )
 REBUILD_CONTROL_PATHS = [".gitignore", "AGENTS.md", ".kb/config.yaml"]
@@ -866,7 +867,7 @@ def build_vector_support_catalog(
     selected_queries = list(query_sources)[:query_limit]
     entries_by_key: dict[tuple[str, str], dict[str, Any]] = {}
     for query in selected_queries:
-        result = search_vectors(repo, query)
+        result = search_vectors(repo, query, offline=True)
         if result.status != "ready":
             return {
                 "status": result.status,
@@ -991,6 +992,9 @@ def _stage_incremental_vectors(
     live_cache = repo / ".kb" / "vectors"
     if live_cache.exists():
         os.symlink(live_cache, staging_repo / ".kb" / "vectors", target_is_directory=True)
+    model_cache = repo / ".kb" / "models"
+    if model_cache.exists():
+        os.symlink(model_cache, staging_repo / ".kb" / "models", target_is_directory=True)
     state = reindex_vectors(
         staging_repo,
         offline=True,
